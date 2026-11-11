@@ -112,11 +112,12 @@ note "binary: $BIN_DIR/shoal-deploy ($("$BIN_DIR/shoal-deploy" version))"
 
 # 4. service
 if [ "$PKG" = "apk" ]; then
-  cat > /etc/init.d/shoal-deploy <<'EOF'
+  # unquoted heredoc: the listen address and data dir must reach the script
+  cat > /etc/init.d/shoal-deploy <<EOF
 #!/sbin/openrc-run
 description="Shoal Deploy control plane"
-command=/usr/local/bin/shoal-deploy
-command_args="--listen ${LISTEN:---listen} --data-dir /var/lib/shoal-deploy"
+command=$BIN_DIR/shoal-deploy
+command_args="--listen $LISTEN --data-dir $DATA_DIR"
 command_user=root:root
 depend() { need docker; after docker; }
 output_log=/var/log/shoal-deploy.log
