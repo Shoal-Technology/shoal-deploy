@@ -191,7 +191,8 @@ func (d *Deployer) run(id string, app App) {
 		return
 	}
 
-	public := fmt.Sprintf("http://%s:%d", hostIP(), port)
+	// Containers publish on loopback only; caddy is the way in from the lan.
+	public := fmt.Sprintf("http://127.0.0.1:%d", port)
 	if app.Domain != "" {
 		public = "https://" + app.Domain
 	}
@@ -346,15 +347,6 @@ func pathOr(p, fallback string) string {
 		return "/" + p
 	}
 	return p
-}
-
-func hostIP() string {
-	conn, err := net.Dial("udp", "1.1.1.1:53")
-	if err != nil {
-		return "127.0.0.1"
-	}
-	defer conn.Close()
-	return conn.LocalAddr().(*net.UDPAddr).IP.String()
 }
 
 func dockerRun2(ctx context.Context, args ...string) error {

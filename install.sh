@@ -64,6 +64,17 @@ else
 fi
 command -v docker >/dev/null 2>&1 && note "docker: $(docker --version | cut -d, -f1)" || note "docker: missing (deploys will fail)"
 
+# 1b. git, needed to clone repositories for builds
+if ! command -v git >/dev/null 2>&1; then
+  echo "installing git"
+  if [ "$PKG" = "apk" ]; then
+    apk add --no-cache git >/dev/null
+  else
+    apt-get install -y -qq git >/dev/null
+  fi
+fi
+note "git: $(git --version)"
+
 # 2. caddy (optional, for domains and TLS)
 if [ "$DO_CADDY" = 1 ] && ! command -v caddy >/dev/null 2>&1; then
   echo "installing caddy"
