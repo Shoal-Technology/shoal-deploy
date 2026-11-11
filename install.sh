@@ -104,6 +104,13 @@ else
   echo "downloading $url"
   tmp="$(mktemp -d)"
   curl -fsSL "$url" -o "$tmp/bundle.tar.gz"
+  if command -v sha256sum >/dev/null 2>&1; then
+    want="$(curl -fsSL "https://github.com/$REPO/releases/download/$tag/checksums.txt" | awk -v f="$(basename "$url")" '$2 == f {print $1}')"
+    [ -n "$want" ] || { echo "no checksum published for $(basename "$url")" >&2; exit 1; }
+    got="$(sha256sum "$tmp/bundle.tar.gz" | awk '{print $1}')"
+    [ "$want" = "$got" ] || { echo "checksum mismatch: expected $want, got $got" >&2; exit 1; }
+    note "checksum: ok"
+  fi
   tar -xzf "$tmp/bundle.tar.gz" -C "$tmp"
   install -m 0755 "$tmp/shoal-deploy" "$BIN_DIR/shoal-deploy"
   rm -rf "$tmp"
@@ -119,6 +126,8 @@ description="Shoal Deploy control plane"
 command=$BIN_DIR/shoal-deploy
 command_args="--listen $LISTEN --data-dir $DATA_DIR"
 command_user=root:root
+command_background=yes
+pidfile=/run/shoal-deploy.pid
 depend() { need docker; after docker; }
 output_log=/var/log/shoal-deploy.log
 error_log=/var/log/shoal-deploy.log
