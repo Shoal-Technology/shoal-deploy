@@ -4,6 +4,7 @@ const root = document.getElementById('root');
 let st = { user: null, apps: [], host: '', docker: '', caddy: false };
 let detail = null;      // { app, deploys, logs }
 let selected = null;    // deploy id
+let inFlight = false;   // a deploy or rollback is in flight
 let timer = null;
 
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -222,7 +223,7 @@ async function renderApp(name) {
         <div class="deploys" id="deploys"></div>
       </div>
       <div>
-        <div class="section-h"><h2 id="logtitle">Build log</h2><span class="tag" id="livetag"></span></div>
+        <div class="section-h"><h2 id="logtitle">Build log</h2><span class="tag" id="livetag"></span><button class="btn small" id="rollback" style="display:none">Roll back to this deploy</button></div>
         <pre class="log" id="log"></pre>
       </div>
     </div>
@@ -267,9 +268,14 @@ async function renderApp(name) {
 
   root.querySelector('#deploy').addEventListener('click', async (e) => {
     e.target.disabled = true;
-    await api('/api/apps/' + encodeURIComponent(name) + '/deploy', { method: 'POST' });
-    setTimeout(() => { e.target.disabled = false; }, 1500);
-    poll();
+    try {
+      await api('/api/apps/' + encodeURIComponent(name) + '/deploy', { method: 'POST' });
+      poll();
+    } catch (err) {
+      alert(err.message);   // e.g. 409 while another deploy of this app runs
+    } finally {
+      setTimeout(() => { e.target.disabled = false; }, 1500);
+    }
   });
   root.querySelector('#logs').addEventListener('click', async () => {
     const out = await api('/api/apps/' + encodeURIComponent(name) + '/logs');
@@ -363,6 +369,20 @@ function renderDetailParts(forceLog) {
   else { text = detail.logs || '(no container output yet)'; root.querySelector('#logtitle').textContent = 'App logs'; }
   const running = cur && ['queued', 'building', 'starting'].includes(cur.status);
   root.querySelector('#livetag').textContent = running ? '[running]' : '';
+  const rb = root.querySelector('#rollback');
+  const canRoll = cur && !cur.live && cur.status === 'ready' && cur.image;
+  rb.style.display = canRoll ? '' : 'none';
+  rb.disabled = !!inFlight;
+  if (canRoll) rb.onclick = async () => {
+    inFlight = true;
+    try {
+      await api('/api/apps/' + encodeURIComponent(decodeURIComponent(location.hash.replace('#/app/', ''))) + '/rollback',
+        { method: 'POST', body: JSON.stringify({ deploy: cur.id }) });
+      selected = null;
+      poll();
+    } catch (err) { alert(err.message); }
+    finally { inFlight = false; renderDetailParts(); }
+  };
   const atBottom = log.scrollTop + log.clientHeight >= log.scrollHeight - 40;
   if (log.textContent !== text) { log.textContent = text; if (atBottom || forceLog) log.scrollTop = log.scrollHeight; }
 }

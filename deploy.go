@@ -296,6 +296,11 @@ func (d *Deployer) writeCaddy() error {
 			fmt.Fprintf(&b, "%s {\n\treverse_proxy 127.0.0.1:%d\n}\n\n", a.Domain, dep.Port)
 		}
 	})
+	// Caddy rejects a completely empty Caddyfile ("adapting config: EOF"), so an
+	// install with no domains yet still gets a valid config that serves nothing.
+	if b.Len() == 0 {
+		b.WriteString("{\n	admin localhost:2019\n}\n")
+	}
 	path := filepath.Join(d.dataDir, "Caddyfile")
 	if err := os.WriteFile(path, []byte(b.String()), 0o644); err != nil {
 		return err
