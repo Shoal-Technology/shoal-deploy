@@ -21,6 +21,10 @@ type Deployer struct {
 	dataDir string
 	caddy   string // caddy binary path, empty when not installed
 
+	// tlsInternal makes caddy issue certificates from its own CA instead of
+	// asking Let's Encrypt. A box without a public dns name needs this.
+	tlsInternal bool
+
 	mu      sync.Mutex
 	running map[string]bool
 }
@@ -293,7 +297,11 @@ func (d *Deployer) writeCaddy() error {
 			if a.Domain == "" || a.Current == "" || !ok || dep.Status != statusReady {
 				continue
 			}
-			fmt.Fprintf(&b, "%s {\n\treverse_proxy 127.0.0.1:%d\n}\n\n", a.Domain, dep.Port)
+			if d.tlsInternal {
+				fmt.Fprintf(&b, "%s {\n\ttls internal\n\treverse_proxy 127.0.0.1:%d\n}\n\n", a.Domain, dep.Port)
+			} else {
+				fmt.Fprintf(&b, "%s {\n\treverse_proxy 127.0.0.1:%d\n}\n\n", a.Domain, dep.Port)
+			}
 		}
 	})
 	// Caddy rejects a completely empty Caddyfile ("adapting config: EOF"), so an

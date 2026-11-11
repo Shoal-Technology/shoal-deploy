@@ -4,6 +4,7 @@
 #   curl -fsSL https://raw.githubusercontent.com/Shoal-Technology/shoal-deploy/main/install.sh | sh
 #   ./install.sh --public        listen on 0.0.0.0:7700 instead of loopback
 #   ./install.sh --no-docker     skip the docker package install
+#   ./install.sh --tls-internal  caddy issues its own certificates (no public dns)
 #
 # Set SHOALDEPLOY_BIN to install an already built binary instead of downloading one.
 set -eu
@@ -14,21 +15,26 @@ DATA_DIR="/var/lib/shoal-deploy"
 BIN_DIR="/usr/local/bin"
 DO_DOCKER=1
 DO_CADDY=1
+TLS_INTERNAL=0
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --public) LISTEN="0.0.0.0:7700" ;;
     --no-docker) DO_DOCKER=0 ;;
     --no-caddy) DO_CADDY=0 ;;
+    --tls-internal) TLS_INTERNAL=1 ;;
     --listen) shift; LISTEN="$1" ;;
     --data-dir) shift; DATA_DIR="$1" ;;
-    -h|--help) sed -n '2,10p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,11p' "$0"; exit 0 ;;
     *) echo "unknown flag: $1" >&2; exit 1 ;;
   esac
   shift
 done
 
 [ "$(id -u)" = 0 ] || { echo "run as root" >&2; exit 1; }
+
+TLS_ARG=""
+if [ "$TLS_INTERNAL" = 1 ]; then TLS_ARG=" --tls-internal"; fi
 
 note() { printf '  %s\n' "$*"; }
 
@@ -135,7 +141,7 @@ if [ "$PKG" = "apk" ]; then
 #!/sbin/openrc-run
 description="Shoal Deploy control plane"
 command=$BIN_DIR/shoal-deploy
-command_args="--listen $LISTEN --data-dir $DATA_DIR"
+command_args="--listen $LISTEN --data-dir $DATA_DIR$TLS_ARG"
 command_user=root:root
 command_background=yes
 pidfile=/run/shoal-deploy.pid
@@ -154,7 +160,7 @@ After=docker.service network-online.target
 Requires=docker.service
 
 [Service]
-ExecStart=$BIN_DIR/shoal-deploy --listen $LISTEN --data-dir $DATA_DIR
+ExecStart=$BIN_DIR/shoal-deploy --listen $LISTEN --data-dir $DATA_DIR$TLS_ARG
 Restart=on-failure
 RestartSec=2
 

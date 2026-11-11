@@ -45,6 +45,18 @@ Mau langsung dari LAN kantor:
 ./install.sh --public      # 0.0.0.0:7700
 ```
 
+VM kantor biasanya tidak punya DNS publik, jadi Caddy tidak bisa minta sertifikat Let's Encrypt. Untuk kasus itu:
+
+```sh
+./install.sh --public --tls-internal
+```
+
+Caddy menerbitkan sertifikat dari CA-nya sendiri. Ekspor root CA-nya sekali, pasang di browser/OS klien, dan domain internal apa pun (`app.nama-kantor.local`) langsung dapat HTTPS:
+
+```sh
+cat /var/lib/caddy/.local/share/caddy/pki/authorities/local/root.crt
+```
+
 Selesai. Satu perintah, tanpa langkah manual.
 
 <details>
@@ -105,7 +117,7 @@ repo (git)  →  docker build  →  container baru di port acak  →  health che
 | URL per deploy | ya, domain sendiri atau port yang di-publish |
 | log build | ya, live di portal |
 | rollback | ya, satu klik, image lama tetap disimpan |
-| promote preview → production | tidak ada konsep environment; satu app satu route |
+| promote preview → production | tidak ada konsep environment; satu app satu route, deploy ulang ref lain |
 | serverless / edge / autoscaling | tidak, dan tidak akan — ini satu mesin |
 | analytics, metering, tagihan | tidak ada. Tidak ada yang dihitung |
 
@@ -135,7 +147,7 @@ GET    /healthz
 - **Satu mesin.** Tidak ada replikasi, tidak ada failover. Backup = salin `state.json`, volume Docker, dan image terakhir.
 - **Caddy opsional.** Tanpa Caddy, app tetap hidup dan bisa diakses lewat port yang di-publish Docker; tidak ada TLS otomatis.
 - **Tiga image terakhir** per app disimpan supaya rollback cepat. Selebihnya dihapus supaya disk tidak penuh.
-- **Tanpa domain publik** (misal VM kantor tanpa DNS), pakai IP dan port, atau Caddy dengan `tls internal` dan CA lokal.
+- **Tanpa domain publik** (misal VM kantor tanpa DNS): install dengan `--tls-internal`. Caddy memakai CA sendiri, tidak menghubungi Let's Encrypt, dan tetap melayani HTTPS untuk domain internal. Tanpa Caddy sama sekali, app tetap hidup di port yang di-publish Docker.
 
 ## Development
 

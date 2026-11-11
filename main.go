@@ -14,7 +14,7 @@ import (
 	"time"
 )
 
-const version = "0.1.3"
+const version = "0.1.5"
 
 func main() {
 	if len(os.Args) > 1 && os.Args[1] == "version" {
@@ -24,6 +24,7 @@ func main() {
 	listen := flag.String("listen", envOr("SHOALDEPLOY_LISTEN", "127.0.0.1:7700"), "address for the portal")
 	dataDir := flag.String("data-dir", envOr("SHOALDEPLOY_DATA", defaultDataDir()), "state, builds and Caddyfile")
 	caddyBin := flag.String("caddy", envOr("SHOALDEPLOY_CADDY", ""), "caddy binary (auto-detected when empty)")
+	tlsInternal := flag.Bool("tls-internal", os.Getenv("SHOALDEPLOY_TLS_INTERNAL") == "1", "issue certificates from caddy's own CA (no public dns)")
 	flag.Parse()
 
 	log.SetFlags(log.Ltime)
@@ -35,7 +36,7 @@ func main() {
 		log.Fatalf("admin: %v", err)
 	}
 
-	dep := &Deployer{store: store, dataDir: *dataDir, caddy: findCaddy(*caddyBin)}
+	dep := &Deployer{store: store, dataDir: *dataDir, caddy: findCaddy(*caddyBin), tlsInternal: *tlsInternal}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	dockerOK := dockerAvailable(ctx)
