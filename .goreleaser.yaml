@@ -1,0 +1,42 @@
+version: 2
+
+project_name: shoal-deploy
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: shoal-deploy
+    main: .
+    binary: shoal-deploy
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+
+archives:
+  - id: bundle
+    name_template: "{{ .ProjectName }}_{{ .Version }}_linux_{{ .Arch }}"
+    files:
+      - README.md
+      - LICENSE
+      - install.sh
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^ci:"
+      - "^test:"

@@ -1,0 +1,5 @@
+/shoal-deploy
+/dist/
+/data/
+*.log
+.DS_Store
