@@ -136,6 +136,7 @@ function renderNew() {
         <div class="field"><label for="ref">Branch or tag</label><input id="ref" type="text" placeholder="main" spellcheck="false"></div>
         <div class="field"><label for="dockerfile">Dockerfile</label><input id="dockerfile" type="text" placeholder="Dockerfile" spellcheck="false"></div>
       </div>
+      <div class="field"><label for="ctx">Build context</label><input id="ctx" type="text" placeholder="." spellcheck="false"><small>folder sent to docker build, relative to the repository root</small></div>
       <div class="row2">
         <div class="field"><label for="domain">Domain</label><input id="domain" type="text" placeholder="app.example.com" spellcheck="false"><small>optional; needs caddy running with DNS pointed here</small></div>
         <div class="field"><label for="health">Health path</label><input id="health" type="text" placeholder="/" spellcheck="false"><small>checked before the route switches</small></div>
@@ -157,6 +158,7 @@ function renderNew() {
       repo: root.querySelector('#repo').value.trim(),
       ref: root.querySelector('#ref').value.trim(),
       dockerfile: root.querySelector('#dockerfile').value.trim(),
+      context: root.querySelector('#ctx').value.trim(),
       domain: root.querySelector('#domain').value.trim(),
       health_path: root.querySelector('#health').value.trim(),
       with_db: root.querySelector('#db').checked,
@@ -244,8 +246,9 @@ async function renderApp(name) {
         </div>
         <div class="row2">
           <div class="field"><label>Dockerfile</label><input id="c-dockerfile" type="text" value="${esc(a.dockerfile)}" spellcheck="false"></div>
-          <div class="field"><label>Container port</label><input id="c-port" type="number" value="${a.port}"></div>
+          <div class="field"><label>Build context</label><input id="c-ctx" type="text" value="${esc(a.context)}" placeholder="." spellcheck="false"></div>
         </div>
+        <div class="field"><label>Container port</label><input id="c-port" type="number" value="${a.port}"></div>
         <div class="row2">
           <div class="field"><label>Domain</label><input id="c-domain" type="text" value="${esc(a.domain)}" spellcheck="false"></div>
           <div class="field"><label>Health path</label><input id="c-health" type="text" value="${esc(a.health_path)}" spellcheck="false"></div>
@@ -300,6 +303,7 @@ async function renderApp(name) {
           repo: root.querySelector('#c-repo').value.trim(),
           ref: root.querySelector('#c-ref').value.trim(),
           dockerfile: root.querySelector('#c-dockerfile').value.trim(),
+          context: root.querySelector('#c-ctx').value.trim(),
           port: Number(root.querySelector('#c-port').value) || 80,
           domain: root.querySelector('#c-domain').value.trim(),
           health_path: root.querySelector('#c-health').value.trim(),

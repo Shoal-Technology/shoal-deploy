@@ -68,8 +68,8 @@ button, input, textarea, select { font: inherit; color: inherit; }
 }
 .app-link:hover { background: rgba(255, 255, 255, .025); }
 .app-link.active { border-left-color: var(--volt); background: rgba(189, 254, 10, .04); }
-.app-link .nm { font-family: var(--mono); font-size: 13px; }
-.app-link .sub { font-family: var(--mono); font-size: 11px; color: var(--dim); margin-top: 2px; }
+.app-link .nm { display: block; font-family: var(--mono); font-size: 13px; overflow: hidden; text-overflow: ellipsis; }
+.app-link .sub { display: block; font-family: var(--mono); font-size: 11px; color: var(--dim); margin-top: 2px; overflow: hidden; text-overflow: ellipsis; }
 
 .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--line-strong); justify-self: center; }
 .dot.ready { background: var(--volt); }
@@ -198,7 +198,7 @@ button, input, textarea, select { font: inherit; color: inherit; }
 .log {
   margin: 0;
   padding: 16px 18px;
-  min-height: 380px;
+  min-height: 200px;
   max-height: 520px;
   overflow: auto;
   background: #050506;
