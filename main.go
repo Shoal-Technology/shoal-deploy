@@ -93,7 +93,7 @@ func findCaddy(explicit string) string {
 	if explicit != "" {
 		return explicit
 	}
-	for _, p := range []string{"/usr/bin/caddy", "/usr/local/bin/caddy", "/sbin/caddy"} {
+	for _, p := range []string{"/usr/bin/caddy", "/usr/local/bin/caddy", "/usr/sbin/caddy", "/sbin/caddy"} {
 		if _, err := os.Stat(p); err == nil {
 			return p
 		}
