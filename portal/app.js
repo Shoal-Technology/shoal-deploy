@@ -139,7 +139,7 @@ function renderNew() {
       <div class="field"><label for="ctx">Build context</label><input id="ctx" type="text" placeholder="." spellcheck="false"><small>folder sent to docker build, relative to the repository root</small></div>
       <div class="row2">
         <div class="field"><label for="domain">Domain</label><input id="domain" type="text" placeholder="app.example.com" spellcheck="false"><small>optional; needs caddy running with DNS pointed here</small></div>
-        <div class="field"><label for="health">Health path</label><input id="health" type="text" placeholder="/" spellcheck="false"><small>checked before the route switches</small></div>
+        <div class="field"><label for="health">Health path</label><input id="health" type="text" placeholder="/" spellcheck="false"><small>checked before the route switches; use "tcp" for services that do not speak HTTP</small></div>
       </div>
       <label class="check"><input type="checkbox" id="db"> Add a PostgreSQL database and inject DATABASE_URL</label>
       <div class="field"><label for="image">Image override (optional)</label><input id="image" type="text" placeholder="nginx:alpine" spellcheck="false"><small>skips the build; useful for a first smoke test</small></div>
@@ -251,7 +251,7 @@ async function renderApp(name) {
         <div class="field"><label>Container port</label><input id="c-port" type="number" value="${a.port}"></div>
         <div class="row2">
           <div class="field"><label>Domain</label><input id="c-domain" type="text" value="${esc(a.domain)}" spellcheck="false"></div>
-          <div class="field"><label>Health path</label><input id="c-health" type="text" value="${esc(a.health_path)}" spellcheck="false"></div>
+          <div class="field"><label>Health path</label><input id="c-health" type="text" value="${esc(a.health_path)}" placeholder="/ or tcp" spellcheck="false"></div>
         </div>
         <div class="actions">
           <button class="btn small" id="savecfg">Save configuration</button>

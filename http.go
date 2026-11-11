@@ -1,8 +1,8 @@
 package main
 
 import (
-	"embed"
 	"context"
+	"embed"
 	"encoding/json"
 	"errors"
 	"io"
@@ -25,8 +25,8 @@ type Server struct {
 
 type appView struct {
 	App
-	Status  string `json:"status"`
-	URL     string `json:"url"`
+	Status   string `json:"status"`
+	URL      string `json:"url"`
 	DeployID string `json:"deploy_id"`
 }
 
@@ -238,7 +238,11 @@ func (s *Server) getApp(w http.ResponseWriter, r *http.Request, user string) {
 		writeErr(w, http.StatusNotFound, "no such app")
 		return
 	}
-	resp := map[string]any{"app": s.view(&app), "deploys": []deployView{}, "logs": ""}
+	resp := map[string]any{"app": s.view(&app), "deploys": []deployView{}, "logs": "",
+		// One app, one signed-in admin: the webhook secret and the database
+		// connection string are shown here and nowhere else.
+		"webhook":  "/api/webhook/" + app.Name + "?token=" + app.Token,
+		"database": ""}
 	s.store.View(func(st *State) {
 		ds := []deployView{}
 		for _, d := range st.Deploys {
@@ -249,6 +253,9 @@ func (s *Server) getApp(w http.ResponseWriter, r *http.Request, user string) {
 		sort.Slice(ds, func(i, j int) bool { return ds[i].Started.After(ds[j].Started) })
 		resp["deploys"] = ds
 	})
+	if app.WithDB && app.DBPassword != "" {
+		resp["database"] = s.dep.databaseURL(app)
+	}
 	if app.Current != "" {
 		if out, err := containerLogs(r.Context(), s.dep.ctrName(app.Name, app.Current), 200); err == nil {
 			resp["logs"] = out
@@ -370,6 +377,10 @@ func (s *Server) deploy(w http.ResponseWriter, r *http.Request, user string) {
 		writeErr(w, http.StatusNotFound, "no such app")
 		return
 	}
+	if errors.Is(err, errBusy) {
+		writeErr(w, http.StatusConflict, errBusy.Error())
+		return
+	}
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
@@ -397,6 +408,10 @@ func (s *Server) rollback(w http.ResponseWriter, r *http.Request, user string) {
 		return
 	}
 	dep, err := s.dep.startDeploy(name, image)
+	if errors.Is(err, errBusy) {
+		writeErr(w, http.StatusConflict, errBusy.Error())
+		return
+	}
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
@@ -441,6 +456,10 @@ func (s *Server) webhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	dep, err := s.dep.startDeploy(app.Name, "")
+	if errors.Is(err, errBusy) {
+		writeErr(w, http.StatusConflict, errBusy.Error())
+		return
+	}
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
@@ -465,4 +484,3 @@ func rctx() context.Context { return context.Background() }
 func execQuiet(ctx context.Context, name string, args ...string) {
 	exec.CommandContext(ctx, name, args...).Run()
 }
-

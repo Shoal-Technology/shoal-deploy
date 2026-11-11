@@ -6,11 +6,13 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -18,13 +20,19 @@ type Deployer struct {
 	store   *Store
 	dataDir string
 	caddy   string // caddy binary path, empty when not installed
+
+	mu      sync.Mutex
+	running map[string]bool
 }
 
 func (d *Deployer) netName(app string) string     { return "shoalnet-" + app }
 func (d *Deployer) ctrName(app, id string) string { return "shoaldeploy-" + app + "-" + id }
 func (d *Deployer) dbName(app string) string      { return "shoaldeploy-" + app + "-db" }
 
-var errNotFound = errors.New("not found")
+var (
+	errNotFound = errors.New("not found")
+	errBusy     = errors.New("a deploy is already running for this app")
+)
 
 // startDeploy records a deploy and runs it in the background.
 func (d *Deployer) startDeploy(appName, image string) (Deploy, error) {
@@ -32,12 +40,31 @@ func (d *Deployer) startDeploy(appName, image string) (Deploy, error) {
 	if !ok {
 		return Deploy{}, errNotFound
 	}
+	// One deploy at a time per app: two in flight would fight over the container
+	// name and could leave an orphan running next to the live one.
+	d.mu.Lock()
+	if d.running == nil {
+		d.running = map[string]bool{}
+	}
+	if d.running[appName] {
+		d.mu.Unlock()
+		return Deploy{}, errBusy
+	}
+	d.running[appName] = true
+	d.mu.Unlock()
 	id := time.Now().UTC().Format("20060102-150405") + "-" + randHex(2)
 	dep := Deploy{ID: id, App: appName, Status: statusQueued, Image: image, Started: time.Now().UTC()}
 	if err := d.store.setDeploy(dep); err != nil {
 		return Deploy{}, err
 	}
-	go d.run(dep.ID, app)
+	go func() {
+		defer func() {
+			d.mu.Lock()
+			delete(d.running, appName)
+			d.mu.Unlock()
+		}()
+		d.run(dep.ID, app)
+	}()
 	return dep, nil
 }
 
@@ -93,13 +120,14 @@ func (d *Deployer) run(id string, app App) {
 	}
 	if image == "" {
 		image = "shoaldeploy/" + app.Name + ":" + id
-		df := filepath.Join(srcDir, filepath.FromSlash(def(app.Dockerfile, "Dockerfile")))
+		// Docker resolves -f relative to the context directory.
+		ctxDir := filepath.Join(srcDir, filepath.FromSlash(def(app.Context, ".")))
+		df := filepath.Join(ctxDir, filepath.FromSlash(def(app.Dockerfile, "Dockerfile")))
 		if _, err := os.Stat(df); err != nil {
-			fail(fmt.Errorf("no Dockerfile at %s — add one to the repository or set the dockerfile path", def(app.Dockerfile, "Dockerfile")))
+			fail(fmt.Errorf("no Dockerfile at %s — add one to the repository or set the dockerfile and build context", strings.TrimPrefix(df, srcDir+"/")))
 			return
 		}
 		d.store.setImage(id, image)
-		ctxDir := filepath.Join(srcDir, filepath.FromSlash(def(app.Context, ".")))
 		logf("[*] docker build -t %s", image)
 		if err := streamCmd(ctx, logf, "docker", "build", "-t", image, "-f", df, ctxDir); err != nil {
 			fail(fmt.Errorf("build failed: %w", err))
@@ -121,8 +149,7 @@ func (d *Deployer) run(id string, app App) {
 			fail(err)
 			return
 		}
-		env["DATABASE_URL"] = fmt.Sprintf("postgres://postgres:%s@%s:5432/postgres?sslmode=disable",
-			app.DBPassword, d.dbName(app.Name))
+		env["DATABASE_URL"] = d.databaseURL(app)
 	}
 
 	ctr := d.ctrName(app.Name, id)
@@ -151,7 +178,14 @@ func (d *Deployer) run(id string, app App) {
 		fail(err)
 		return
 	}
-	if err := waitHealthy(ctx, fmt.Sprintf("http://127.0.0.1:%d%s", port, pathOr(app.HealthPath, "/")), 90*time.Second, logf); err != nil {
+	checkErr := error(nil)
+	if strings.EqualFold(app.HealthPath, "tcp") {
+		// Database and other non-HTTP services: a TCP accept is the health signal.
+		checkErr = waitTCP(ctx, port, 90*time.Second, logf)
+	} else {
+		checkErr = waitHealthy(ctx, fmt.Sprintf("http://127.0.0.1:%d%s", port, pathOr(app.HealthPath, "/")), 90*time.Second, logf)
+	}
+	if err := checkErr; err != nil {
 		d.rm(ctr)
 		fail(err)
 		return
@@ -180,6 +214,18 @@ func (d *Deployer) run(id string, app App) {
 	if err := d.writeCaddy(); err != nil {
 		logf("[!] caddy: %v", err)
 	}
+}
+
+// databaseURL is built from url.URL so the passphrase is escaped once, correctly.
+func (d *Deployer) databaseURL(app App) string {
+	u := url.URL{
+		Scheme:   "postgres",
+		User:     url.UserPassword("postgres", app.DBPassword),
+		Host:     net.JoinHostPort(d.dbName(app.Name), "5432"),
+		Path:     "/postgres",
+		RawQuery: url.Values{"sslmode": {"disable"}}.Encode(),
+	}
+	return u.String()
 }
 
 // rm removes a container but keeps its image for rollback.
@@ -334,6 +380,25 @@ func containerPortRetry(ctx context.Context, name string, port int) (int, error)
 			return 0, fmt.Errorf("container %s published no port for %d/tcp: %w", name, port, err)
 		}
 		time.Sleep(500 * time.Millisecond)
+	}
+}
+
+func waitTCP(ctx context.Context, port int, timeout time.Duration, logf func(string, ...any)) error {
+	deadline := time.Now().Add(timeout)
+	last := "no listener"
+	for {
+		d := net.Dialer{Timeout: 2 * time.Second}
+		conn, err := d.DialContext(ctx, "tcp", fmt.Sprintf("127.0.0.1:%d", port))
+		if err == nil {
+			conn.Close()
+			logf("[ok] tcp health check -> accepting on %d", port)
+			return nil
+		}
+		last = err.Error()
+		if time.Now().After(deadline) {
+			return fmt.Errorf("tcp health check on port %d failed after %s: %s", port, timeout, last)
+		}
+		time.Sleep(time.Second)
 	}
 }
 
