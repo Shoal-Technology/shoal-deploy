@@ -153,5 +153,8 @@ if [ -f "$DATA_DIR/initial-passphrase" ]; then
 fi
 echo
 echo "portal: http://$LISTEN/  (user admin)"
-[ "$LISTEN" = "127.0.0.1:7700" ] && echo "loopback only: open a tunnel, e.g. ssh -L 7700:127.0.0.1:7700 $(hostname)"
+if [ "$LISTEN" = "127.0.0.1:7700" ]; then
+  echo "loopback only: open a tunnel, e.g. ssh -L 7700:127.0.0.1:7700 $(hostname)"
+fi
 echo "put it behind caddy for a domain and TLS: reverse_proxy 127.0.0.1:7700"
+exit 0
