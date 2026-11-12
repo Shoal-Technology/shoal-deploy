@@ -199,7 +199,7 @@ function renderNew() {
       <div class="field">
         <span class="q">2. Kodenya ada di mana?</span>
         <input id="repo" type="text" placeholder="https://github.com/nama/repo.git" spellcheck="false" autocomplete="off">
-        <small>tempel link repo git. Harus ada <span class="mono">Dockerfile</span> di dalamnya.</small>
+        <small>tempel link repo git yang <b>publik</b> — bukan link halaman file, dan harus ada <span class="mono">Dockerfile</span> di dalamnya.</small>
       </div>
       <div class="err" id="err"></div>
       <div class="actions">
