@@ -116,13 +116,8 @@ fi
 if command -v caddy >/dev/null 2>&1; then
   note "caddy: $(caddy version | head -1)"
   if [ "$PKG" = "apk" ]; then
-    # Alpine's caddy-openrc runs `caddy run $caddy_opts` and ships no
-    # /etc/conf.d/caddy, so caddy would start with an empty config and answer
-    # nothing on 80/443. Point it at the file shoal-deploy writes.
-    mkdir -p /etc/conf.d
-    if [ ! -f /etc/conf.d/caddy ]; then
-      echo "caddy_opts=\"--config /etc/caddy/Caddyfile --adapter caddyfile\"" > /etc/conf.d/caddy
-    fi
+    # caddy-openrc already defaults to --config /etc/caddy/Caddyfile; the missing
+    # piece is only that it has to be installed, and caddy started once.
     rc-update add caddy default >/dev/null 2>&1 || true
     rc-service caddy restart >/dev/null 2>&1 || rc-service caddy start >/dev/null 2>&1 || true
   else
