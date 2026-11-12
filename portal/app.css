@@ -178,7 +178,7 @@ button, input, textarea, select { font: inherit; color: inherit; }
 .hero .why { margin-top: 10px; color: var(--muted); font-size: 14px; max-width: 60ch; }
 .hero .open { margin-top: 20px; display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
 .hero .addr {
-  margin-top: 14px; font: 400 12px/1.6 var(--mono); color: var(--muted); word-break: break-all;
+  margin-top: 14px; font: 400 12px/1.6 var(--mono); color: var(--muted); overflow-wrap: anywhere;
 }
 .hero .addr a { color: var(--accent); border-bottom: 1px solid color-mix(in srgb, var(--accent) 35%, transparent); }
 

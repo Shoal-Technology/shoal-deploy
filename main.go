@@ -14,7 +14,7 @@ import (
 	"time"
 )
 
-var version = "0.1.9"
+var version = "0.1.10"
 
 func main() {
 	if len(os.Args) > 1 && os.Args[1] == "version" {

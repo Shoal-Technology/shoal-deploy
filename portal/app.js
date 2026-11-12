@@ -431,7 +431,6 @@ function envRow(k, v) {
 
 function renderDetailParts(forceLog) {
   const a = detail.app;
-  const live = liveDeploy();
   const s = a.status || 'none';
 
   const verdict = root.querySelector('#verdict');
@@ -445,7 +444,9 @@ function renderDetailParts(forceLog) {
       ? 'Berjalan di server ini. Alamat di bawah hanya bisa dibuka dari server; tambahkan domain supaya bisa dibuka dari komputer lain.'
       : 'Siapa pun di jaringan ini bisa membukanya lewat alamat di bawah.';
   } else if (s === 'failed') {
-    why.textContent = (live && live.error) ? live.error : 'Buka "Catatan build" untuk melihat bagian mana yang gagal.';
+    // The failing deploy is never live, so read the error off the selected row.
+    const bad = detail.deploys.find((d) => d.id === selected) || detail.deploys[0];
+    why.textContent = (bad && bad.error) || 'Buka "Catatan build" untuk melihat bagian mana yang gagal.';
   } else if (s === 'none') {
     why.textContent = 'Tekan "Bangun ulang" untuk membangun dan menjalankannya.';
   } else {

@@ -194,7 +194,12 @@ func (d *Deployer) run(id string, app App) {
 	}
 	if err := checkErr; err != nil {
 		d.rm(ctr)
-		fail(err)
+		// Most first-deploy failures are a port mismatch, not a broken app.
+		declared := ""
+		if p, perr := declaredPorts(ctx, image); perr == nil {
+			declared = p
+		}
+		fail(fmt.Errorf("%w%s", err, portHint(declared, app.Port)))
 		return
 	}
 
@@ -234,6 +239,23 @@ func (d *Deployer) databaseURL(app App) string {
 		RawQuery: url.Values{"sslmode": {"disable"}}.Encode(),
 	}
 	return u.String()
+}
+
+// declaredPorts lists the ports the image itself declares, e.g. "3000/tcp ".
+// Container inspect is useless here: publishing a port adds it to ExposedPorts.
+func declaredPorts(ctx context.Context, image string) (string, error) {
+	return dockerRun(ctx, "image", "inspect", "--format",
+		"{{range $p, $_ := .Config.ExposedPorts}}{{$p}} {{end}}", image)
+}
+
+// portHint explains a failed health check when the image declares a different
+// port than the one configured. Empty when the ports agree or are unknown.
+func portHint(declared string, port int) string {
+	declared = strings.TrimSpace(declared)
+	if declared == "" || strings.Contains(declared, fmt.Sprintf("%d/tcp", port)) {
+		return ""
+	}
+	return fmt.Sprintf(" — image ini mendeklarasikan port %s, bukan %d. Cek isian \"port container\" di pengaturan teknis.", declared, port)
 }
 
 // rm removes a container but keeps its image for rollback.

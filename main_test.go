@@ -244,3 +244,37 @@ func login(t *testing.T, base string) *http.Cookie {
 	}
 	return res.Cookies()[0]
 }
+
+func TestPortHint(t *testing.T) {
+	cases := []struct {
+		declared string
+		port     int
+		want     bool
+	}{
+		{"3000/tcp", 80, true},    // nginx-style mismatch
+		{"3000/tcp", 3000, false}, // agrees
+		{"80/tcp 8080/tcp", 8080, false},
+		{"", 80, false}, // unknown: say nothing
+		{"  ", 80, false},
+	}
+	for _, c := range cases {
+		got := portHint(c.declared, c.port)
+		if (got != "") != c.want {
+			t.Fatalf("portHint(%q, %d) = %q, want hint=%v", c.declared, c.port, got, c.want)
+		}
+	}
+}
+
+func TestFailedFirstDeployShowsAsFailed(t *testing.T) {
+	st := &State{Apps: map[string]*App{"api": {Name: "api"}}, Deploys: map[string]*Deploy{
+		"20260101-000000-aaaa": {ID: "20260101-000000-aaaa", App: "api", Status: statusReady},
+		"20260102-000000-bbbb": {ID: "20260102-000000-bbbb", App: "api", Status: statusFailed, Error: "boom"},
+		"20260103-000000-cccc": {ID: "20260103-000000-cccc", App: "other", Status: statusReady},
+	}}
+	if got := newAppView(st, st.Apps["api"]).Status; got != statusFailed {
+		t.Fatalf("status = %q, want %q", got, statusFailed)
+	}
+	if got := newAppView(st, st.Apps["api"]).DeployID; got != "20260102-000000-bbbb" {
+		t.Fatalf("deploy = %q, want newest deploy of that app", got)
+	}
+}

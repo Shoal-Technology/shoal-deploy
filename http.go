@@ -152,7 +152,18 @@ func (s *Server) changePassword(w http.ResponseWriter, r *http.Request, user str
 func newAppView(st *State, a *App) appView {
 	v := appView{App: *a, Status: "none"}
 	v.DBPassword, v.Token = "", ""
-	if d, ok := st.Deploys[a.Current]; ok {
+	// A failed first deploy never becomes Current, so fall back to the newest
+	// deploy row, or the UI claims the app was never run.
+	id := a.Current
+	if _, ok := st.Deploys[id]; !ok {
+		id = ""
+		for did, d := range st.Deploys {
+			if d.App == a.Name && did > id {
+				id = did
+			}
+		}
+	}
+	if d, ok := st.Deploys[id]; ok {
 		v.Status, v.URL, v.DeployID = d.Status, d.URL, d.ID
 	}
 	return v
