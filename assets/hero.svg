@@ -47,7 +47,7 @@
   </g>
 
   <g transform="translate(72,116)">
-    <g transform="translate(0,-46)">
+    <g transform="translate(0,-94)">
       <path class="fish" d="M0 0 h34 l-6 8 H0z"/>
       <path class="fish" d="M5 12 h34 l-6 8 H5z" opacity=".8"/>
       <path class="fish" d="M0 24 h34 l-6 8 H0z" opacity=".6"/>

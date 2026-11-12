@@ -121,6 +121,9 @@ func (d *Deployer) run(id string, app App) {
 
 	if image == "" && app.Image != "" {
 		image = app.Image
+		// Record the resolved image even when nothing was built, so the deploy
+		// row can be rolled back to later (rollback reads Deploy.Image).
+		d.store.setImage(id, image)
 	}
 	if image == "" {
 		image = "shoaldeploy/" + app.Name + ":" + id

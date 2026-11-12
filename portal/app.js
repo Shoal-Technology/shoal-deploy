@@ -8,6 +8,7 @@ let inFlight = false;   // a deploy or rollback is in flight
 let timer = null;
 
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const logo = '<img src="/logo.svg" alt="" width="30" height="23">';
 
 async function api(path, opts = {}) {
   const res = await fetch(path, {
@@ -21,6 +22,40 @@ async function api(path, opts = {}) {
   return body;
 }
 
+/* Plain-language vocabulary. The portal is used by people who do not know what
+   a container, a build context or a health check is, so the UI never says those
+   words unless the user opened the technical section on purpose. */
+const STATE = {
+  ready: 'Sedang jalan',
+  building: 'Sedang dibangun',
+  starting: 'Sedang dinyalakan',
+  queued: 'Menunggu giliran',
+  failed: 'Gagal',
+  none: 'Belum pernah dijalankan',
+};
+const VERDICT = {
+  ready: 'Aplikasi jalan.',
+  building: 'Sedang dibangun.',
+  starting: 'Sedang dinyalakan.',
+  queued: 'Menunggu giliran dibangun.',
+  failed: 'Deploy terakhir gagal.',
+  none: 'Aplikasi ini belum pernah dijalankan.',
+};
+
+function ago(iso) {
+  if (!iso) return '—';
+  const s = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
+  if (s < 60) return 'baru saja';
+  if (s < 3600) return Math.floor(s / 60) + ' menit lalu';
+  if (s < 86400) return Math.floor(s / 3600) + ' jam lalu';
+  if (s < 30 * 86400) return Math.floor(s / 86400) + ' hari lalu';
+  return new Date(iso).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' });
+}
+
+// 127.0.0.1 addresses only work on the server itself; say so instead of letting
+// a beginner paste it into their own browser and think the app is broken.
+const localOnly = (u) => /^https?:\/\/(127\.0\.0\.1|localhost|\[::1\])/i.test(u || '');
+
 /* ---------- login ---------- */
 function renderLogin(msg = '') {
   clearInterval(timer);
@@ -28,21 +63,22 @@ function renderLogin(msg = '') {
   <div class="login-wrap">
     <form class="login" id="login">
       <div class="mark">
+        ${logo}
         <b>shoal deploy</b>
-        <span>${st.version ? 'v' + esc(String(st.version).replace(/^v/, '')) : 'control plane'}</span>
-        <em>Build, run, route — one box.</em>
+        <span>v${esc(String(st.version || '').replace(/^v/, '') || '0.1.9')}</span>
+        <em>Satu kotak, semua aplikasi.</em>
       </div>
       <div class="field">
-        <label for="u">User</label>
+        <label for="u">Nama pengguna</label>
         <input id="u" type="text" value="admin" autocomplete="username" spellcheck="false">
       </div>
       <div class="field">
-        <label for="p">Passphrase</label>
+        <label for="p">Kata sandi</label>
         <input id="p" type="password" autocomplete="current-password">
-        <small>first run: see initial-passphrase in the data directory</small>
+        <small>pertama kali: buka file initial-passphrase di folder data</small>
       </div>
       <div class="err" id="err">${esc(msg)}</div>
-      <button class="btn primary" type="submit">Sign in</button>
+      <button class="btn primary wide" type="submit">Masuk</button>
     </form>
   </div>`;
   root.querySelector('#login').addEventListener('submit', async (e) => {
@@ -63,100 +99,148 @@ function renderLogin(msg = '') {
   root.querySelector('#p').focus();
 }
 
-/* ---------- shell ---------- */
-function rail(active) {
-  const items = st.apps.map((a) => `
-    <a class="app-link ${a.name === active ? 'active' : ''}" href="#/app/${encodeURIComponent(a.name)}">
-      <span class="dot ${a.status}"></span>
-      <span><span class="nm">${esc(a.name)}</span><span class="sub">${esc(a.domain || (a.url ? a.url.replace(/^https?:\/\//, '') : 'no route'))}</span></span>
-    </a>`).join('') || '<div class="app-link"><span class="dot"></span><span class="sub">no apps yet</span></div>';
-  return `
-  <aside class="rail">
-    <div class="brand"><b>shoal</b><span>deploy · v${esc((st.version || '').replace(/^v/, ''))}</span><a class="new" href="#/new">+ new</a></div>
-    <nav class="app-list">${items}</nav>
-    <div class="rail-foot">
-      <div>${esc(st.host)}</div>
-      <div>docker ${esc(st.docker)}</div>
-      <div>caddy ${st.caddy ? 'active' : 'off'}</div>
-      <div style="margin-top:6px"><a href="#/settings" class="dim">[settings]</a> &nbsp; <a href="#" id="logout" class="dim">[logout]</a></div>
+/* ---------- frame ---------- */
+function frame(body, active = '') {
+  root.innerHTML = `
+  <header class="top">
+    <a class="lockup" href="#/">
+      ${logo}
+      <span class="words"><b>shoal</b><span>deploy</span></span>
+    </a>
+    <div class="right">
+      <a href="#/" ${active === 'apps' ? 'style="color:var(--accent)"' : ''}>Aplikasi</a>
+      <a href="#/settings" ${active === 'settings' ? 'style="color:var(--accent)"' : ''}>Pengaturan</a>
+      <button id="logout" type="button">Keluar</button>
     </div>
-  </aside>`;
-}
-
-function shell(active, topbar, body) {
-  root.innerHTML = `<div class="shell">${rail(active)}<main class="main"><div class="topbar">${topbar}</div>${body}</main></div>`;
+  </header>
+  <main class="page">${body}</main>`;
   const out = root.querySelector('#logout');
-  if (out) out.addEventListener('click', async (e) => { e.preventDefault(); await api('/api/logout', { method: 'POST' }); st.user = null; renderLogin(); });
+  if (out) out.addEventListener('click', async () => {
+    await api('/api/logout', { method: 'POST' });
+    st.user = null;
+    location.hash = '#/';
+    renderLogin();
+  });
 }
 
-/* ---------- overview ---------- */
+const sig = `<footer class="sig"><span>shoal deploy${st.host ? ' · ' + esc(st.host) : ''}</span><span>${st.caddy ? 'tls aktif' : 'tanpa domain'}</span></footer>`;
+
+/* ---------- home ---------- */
 async function renderHome() {
   clearInterval(timer);
   await refresh();
-  const body = st.apps.length ? `
-    <div class="wrap">
-      <div class="head"><div>
-        <h1>Applications</h1>
-        <div class="meta"><span>${st.apps.length} app${st.apps.length === 1 ? '' : 's'}</span><span>·</span><span>${st.apps.filter((a) => a.status === 'ready').length} live</span></div>
-      </div><a class="btn primary" href="#/new">+ new app</a></div>
-      <div class="deploys" style="margin-top:26px">
-        ${st.apps.map((a) => `
-          <a class="deploy" href="#/app/${encodeURIComponent(a.name)}">
-            <div><div class="id nm">${esc(a.name)}</div>
-              <div class="sub"><span>${esc(a.repo || a.image || 'no repository')}</span><span>${esc(a.url || a.domain || 'no route')}</span></div></div>
-            <div class="right"><span class="bracket ${a.status}">[${esc((a.status || 'none').toUpperCase())}]</span></div>
-          </a>`).join('')}
+  const apps = st.apps || [];
+  const live = apps.filter((a) => a.status === 'ready').length;
+
+  const cards = apps.map((a) => {
+    const s = a.status || 'none';
+    return `
+    <a class="card" href="#/app/${encodeURIComponent(a.name)}">
+      <div>
+        <div class="name"><span>${esc(a.name)}</span></div>
+        <div class="state">
+          <span class="dot ${esc(s)}"></span>
+          <b>${esc(STATE[s] || s)}</b>
+          ${a.url ? `<span class="url">· ${esc(a.url.replace(/^https?:\/\//, ''))}</span>` : ''}
+        </div>
       </div>
-    </div>` : `
-    <div class="wrap"><div class="empty-state">
-      <h1>Nothing deployed<i>yet.</i></h1>
-      <p>Point an app at a git repository with a Dockerfile. Shoal Deploy builds it, runs it as a container, health-checks it and puts it behind a route — no pipeline files, no cluster.</p>
-      <a class="btn primary" href="#/new">+ new app</a>
+      <div class="go">
+        ${s === 'ready' && a.url && !localOnly(a.url)
+          ? `<a class="btn primary small" href="${esc(a.url)}" target="_blank" rel="noreferrer" onclick="event.stopPropagation()">Buka</a>`
+          : `<span class="btn small">Lihat</span>`}
+      </div>
+    </a>`;
+  }).join('');
+
+  const body = apps.length ? `
+    <div class="lede">
+      <h1>Aplikasi <i>kamu.</i></h1>
+      <p>Semua yang berjalan di server ini. Klik satu aplikasi untuk melihat catatannya, memakai versi lama, atau menyalakannya lagi.</p>
+      <div class="count"><span><b>${apps.length}</b> aplikasi</span><span><b>${live}</b> sedang jalan</span></div>
     </div>
-    <footer class="sig"><span>shoal deploy · ${esc(st.host)}</span><span>docker ${esc(st.docker)} · caddy ${st.caddy ? 'active' : 'off'}</span></footer>
+    <div class="cards">${cards}</div>
+    <div class="actions end" style="margin-top:26px"><a class="btn primary" href="#/new">+ Tambah aplikasi</a></div>
+    ${sig}` : `
+    <div class="empty">
+      <div class="lede">
+        <h1>Belum ada <i>apa-apa.</i></h1>
+        <p>Server ini kosong. Kalau kamu punya kode aplikasi di GitHub atau GitLab, tempel alamatnya — shoal yang membangun dan menjalankannya.</p>
+      </div>
+      <div class="steps">
+        <div class="step"><div class="n">01</div><div><div class="t">Beri nama</div><div class="d">Satu kata, huruf kecil. Ini yang muncul di daftar.</div></div></div>
+        <div class="step"><div class="n">02</div><div><div class="t">Tempel alamat kodenya</div><div class="d">Link repo GitHub atau GitLab. Repo-nya harus punya file <span class="mono">Dockerfile</span> di folder utama.</div></div></div>
+        <div class="step"><div class="n">03</div><div><div class="t">Tunggu, lalu buka</div><div class="d">Shoal membangun aplikasinya, mengecek sampai benar-benar hidup, lalu memberi kamu alamat untuk dibuka.</div></div></div>
+      </div>
+      <div class="actions"><a class="btn primary" href="#/new">+ Tambah aplikasi</a><a class="btn ghost" href="#/new?contoh=1">Coba contoh dulu</a></div>
+      ${sig}
     </div>`;
-  shell('', `<div class="where">control plane · <b>${esc(st.user)}</b></div>`, body);
+
+  frame(body, 'apps');
 }
 
 async function refresh() {
-  try {
-    const data = await api('/api/overview');
-    st = data;
-  } catch (e) { /* login view already shown */ }
+  try { st = await api('/api/overview'); } catch (e) { /* login view already shown */ }
 }
 
-/* ---------- new app ---------- */
+/* ---------- add app ---------- */
 function renderNew() {
   clearInterval(timer);
   const body = `
-  <div class="wrap">
-    <div class="head"><div><h1>New app</h1>
-      <div class="meta"><span>repository + Dockerfile</span><span>one container, one route</span></div></div></div>
-    <form class="form" id="create" style="margin-top:26px">
-      <div class="row2">
-        <div class="field"><label for="name">Name</label><input id="name" type="text" placeholder="office-api" required spellcheck="false"><small>lowercase, one word</small></div>
-        <div class="field"><label for="port">Container port</label><input id="port" type="number" value="80" min="1" max="65535"></div>
+    <div class="lede">
+      <h1>Tambah <i>aplikasi.</i></h1>
+      <p>Cukup dua hal: nama dan alamat kodenya. Sisanya sudah diisi otomatis dan bisa kamu ubah nanti.</p>
+    </div>
+    <form class="form" id="create">
+      <div class="field">
+        <span class="q">1. Mau disebut apa?</span>
+        <input id="name" type="text" placeholder="kasir" required spellcheck="false" autocomplete="off">
+        <small>huruf kecil, tanpa spasi — misalnya <span class="mono">kasir</span> atau <span class="mono">laporan-bulanan</span></small>
       </div>
-      <div class="field"><label for="repo">Repository</label><input id="repo" type="text" placeholder="https://github.com/org/repo.git" spellcheck="false"><small>https or ssh url; leave empty to deploy an existing image name typed in the image field below</small></div>
-      <div class="row2">
-        <div class="field"><label for="ref">Branch or tag</label><input id="ref" type="text" placeholder="main" spellcheck="false"></div>
-        <div class="field"><label for="dockerfile">Dockerfile</label><input id="dockerfile" type="text" placeholder="Dockerfile" spellcheck="false"></div>
+      <div class="field">
+        <span class="q">2. Kodenya ada di mana?</span>
+        <input id="repo" type="text" placeholder="https://github.com/nama/repo.git" spellcheck="false" autocomplete="off">
+        <small>tempel link repo git. Harus ada <span class="mono">Dockerfile</span> di dalamnya.</small>
       </div>
-      <div class="field"><label for="ctx">Build context</label><input id="ctx" type="text" placeholder="." spellcheck="false"><small>folder sent to docker build, relative to the repository root</small></div>
-      <div class="row2">
-        <div class="field"><label for="domain">Domain</label><input id="domain" type="text" placeholder="app.example.com" spellcheck="false"><small>optional; needs caddy running with DNS pointed here</small></div>
-        <div class="field"><label for="health">Health path</label><input id="health" type="text" placeholder="/" spellcheck="false"><small>checked before the route switches; use "tcp" for services that do not speak HTTP</small></div>
-      </div>
-      <label class="check"><input type="checkbox" id="db"> Add a PostgreSQL database and inject DATABASE_URL</label>
-      <div class="field"><label for="image">Image override (optional)</label><input id="image" type="text" placeholder="nginx:alpine" spellcheck="false"><small>skips the build; useful for a first smoke test</small></div>
       <div class="err" id="err"></div>
-      <div class="actions"><button class="btn primary" type="submit">Create app</button><a class="btn ghost" href="#/">Cancel</a></div>
-    </form>
-  </div>`;
-  shell('', `<div class="where">control plane · <b>${esc(st.user)}</b></div>`, body);
+      <div class="actions">
+        <button class="btn primary" type="submit">Bangun dan jalankan</button>
+        <a class="btn ghost" href="#/">Batal</a>
+      </div>
+
+      <details class="panel" style="margin-top:10px">
+        <summary>Pengaturan lanjutan</summary>
+        <div class="body">
+          <p class="note">Kosongkan saja kalau tidak yakin. Nilai di bawah ini yang dipakai shoal untuk repo biasa.</p>
+          <div class="row2">
+            <div class="field"><label for="ref">Cabang atau tag</label><input id="ref" type="text" placeholder="main" spellcheck="false"></div>
+            <div class="field"><label for="port">Port di dalam container</label><input id="port" type="number" value="80" min="1" max="65535"></div>
+          </div>
+          <div class="row2" style="margin-top:16px">
+            <div class="field"><label for="dockerfile">Nama Dockerfile</label><input id="dockerfile" type="text" placeholder="Dockerfile" spellcheck="false"></div>
+            <div class="field"><label for="ctx">Folder build</label><input id="ctx" type="text" placeholder="." spellcheck="false"></div>
+          </div>
+          <div class="row2" style="margin-top:16px">
+            <div class="field"><label for="domain">Domain</label><input id="domain" type="text" placeholder="kasir.perusahaan.local" spellcheck="false"><small>butuh caddy aktif dan DNS diarahkan ke server ini</small></div>
+            <div class="field"><label for="health">Alamat pengecekan</label><input id="health" type="text" placeholder="/" spellcheck="false"><small>dibuka dulu sebelum aplikasi dianggap hidup; tulis <span class="mono">tcp</span> untuk yang bukan web</small></div>
+          </div>
+          <label class="check" style="margin-top:18px"><input type="checkbox" id="db"><span>Tambahkan database PostgreSQL<small>Shoal membuatkan databasenya dan mengisi <span class="mono">DATABASE_URL</span> sendiri.</small></span></label>
+          <div class="field" style="margin-top:16px"><label for="image">Pakai image jadi (lewati build)</label><input id="image" type="text" placeholder="nginx:alpine" spellcheck="false"><small>untuk mencoba cepat tanpa repo</small></div>
+        </div>
+      </details>
+    </form>`;
+
+  frame(body, 'apps');
+
+  const q = new URLSearchParams((location.hash.split('?')[1] || ''));
+  if (q.get('contoh')) {
+    root.querySelector('#name').value = 'contoh';
+    root.querySelector('#repo').value = 'https://github.com/docker/welcome-to-docker.git';
+    root.querySelector('#port').value = '80';
+  }
+
   root.querySelector('#create').addEventListener('submit', async (e) => {
     e.preventDefault();
-    const btn = e.target.querySelector('button');
+    const btn = e.target.querySelector('button[type=submit]');
     btn.disabled = true;
     const payload = {
       name: root.querySelector('#name').value.trim(),
@@ -168,21 +252,17 @@ function renderNew() {
       domain: root.querySelector('#domain').value.trim(),
       health_path: root.querySelector('#health').value.trim(),
       with_db: root.querySelector('#db').checked,
+      image: root.querySelector('#image').value.trim(),
       env: {},
     };
-    const image = root.querySelector('#image').value.trim();
+    if (!payload.repo && !payload.image) {
+      root.querySelector('#err').textContent = 'Isi alamat kodenya dulu, atau isi bagian "pakai image jadi" di pengaturan lanjutan.';
+      btn.disabled = false;
+      return;
+    }
     try {
       await api('/api/apps', { method: 'POST', body: JSON.stringify(payload) });
-      const app = (await api('/api/apps/' + encodeURIComponent(payload.name))).app;
-      if (image) {
-        // A first deploy from a plain image: record it so the app has something live.
-        await api('/api/apps/' + encodeURIComponent(payload.name), {
-          method: 'PUT', body: JSON.stringify({ repo: '' }),
-        });
-        await api('/api/apps/' + encodeURIComponent(payload.name) + '/deploy', { method: 'POST' });
-      } else {
-        await api('/api/apps/' + encodeURIComponent(app.name) + '/deploy', { method: 'POST' });
-      }
+      await api('/api/apps/' + encodeURIComponent(payload.name) + '/deploy', { method: 'POST' });
       location.hash = '#/app/' + encodeURIComponent(payload.name);
     } catch (err) {
       root.querySelector('#err').textContent = err.message;
@@ -191,124 +271,126 @@ function renderNew() {
   });
 }
 
-/* ---------- app detail ---------- */
+/* ---------- one app ---------- */
 async function renderApp(name) {
   clearInterval(timer);
-  // the rail renders from st.apps, so a direct link needs the overview too
-  await refresh();
+  await refresh();   // the frame renders from st.apps
   const data = await api('/api/apps/' + encodeURIComponent(name));
   detail = data;
   selected = data.app.deploy_id || (data.deploys[0] && data.deploys[0].id) || null;
-
   const a = data.app;
+
   const body = `
-  <div class="wrap">
-    <div class="head">
-      <div>
-        <h1>${esc(a.name)}</h1>
-        <div class="meta">
-          <span>${esc(a.repo || a.image || 'no repository')}${a.ref ? '@' + esc(a.ref) : ''}</span>
-          ${a.url ? `<a href="${esc(a.url)}" target="_blank" rel="noreferrer">${esc(a.url)}</a>` : '<span>no route</span>'}
-        </div>
-      </div>
-      <div style="display:flex;gap:8px">
-        <button class="btn" id="logs">App logs</button>
-        <button class="btn primary" id="deploy">Deploy</button>
-      </div>
+    <div class="lede">
+      <h1>${esc(a.name)}</h1>
+      <div class="count"><span>${esc(a.repo || a.image || 'belum ada kode')}${a.ref ? '@' + esc(a.ref) : ''}</span></div>
     </div>
 
-    <div class="band">
-      <div><div class="k">Status</div><div class="v" id="b-status">—</div></div>
-      <div><div class="k">Deploy</div><div class="v" id="b-deploy">—</div></div>
-      <div><div class="k">Commit</div><div class="v" id="b-commit">—</div></div>
-      <div><div class="k">Port</div><div class="v" id="b-port">—</div></div>
+    <div class="hero">
+      <div class="line"><span class="verdict" id="verdict">—</span></div>
+      <div class="why" id="why"></div>
+      <div class="open">
+        <button class="btn primary" id="open">Buka aplikasi</button>
+        <button class="btn ghost" id="deploy">Bangun ulang</button>
+      </div>
+      <div class="addr" id="addr"></div>
     </div>
 
-    <div class="grid">
-      <div>
-        <div class="section-h"><h2>Deploys</h2><span class="tag" id="count"></span></div>
-        <div class="deploys" id="deploys"></div>
+    <details class="panel" open>
+      <summary>Riwayat versi</summary>
+      <div class="body">
+        <div class="hist" id="hist"></div>
+        <p class="note" style="margin-top:14px">Versi lama tetap tersimpan. Kalau versi baru rusak, pilih versi sebelumnya lalu tekan <b>Pakai versi ini</b>.</p>
       </div>
-      <div>
-        <div class="section-h"><h2 id="logtitle">Build log</h2><span class="tag" id="livetag"></span><button class="btn small" id="rollback" style="display:none">Roll back to this deploy</button></div>
+    </details>
+
+    <details class="panel">
+      <summary>Catatan build</summary>
+      <div class="body">
+        <p class="note" id="logtitle">Pilih satu versi di atas untuk membaca catatannya.</p>
         <pre class="log" id="log"></pre>
       </div>
-    </div>
+    </details>
 
-    <div style="margin-top:40px">
-      <div class="section-h"><h2>Environment</h2><span class="tag">injected at run time</span></div>
-      <table class="env-table" id="env"></table>
-      <div class="actions">
-        <button class="btn small" id="addenv">+ add variable</button>
-        <button class="btn small" id="saveenv">Save environment</button>
-        <span class="err" id="enverr"></span>
+    <details class="panel">
+      <summary>Variabel lingkungan</summary>
+      <div class="body">
+        <p class="note">Nilai yang dikirim ke aplikasi saat dijalankan, misalnya kunci API. Disimpan di server ini.</p>
+        <table class="env-table" id="env"></table>
+        <div class="actions end">
+          <button class="btn small" id="addenv">+ Tambah</button>
+          <button class="btn small" id="saveenv">Simpan</button>
+          <span class="err ok" id="enverr"></span>
+        </div>
       </div>
-    </div>
+    </details>
 
-    <div style="margin-top:40px">
-      <div class="section-h"><h2>Configuration</h2><span class="tag">applied on the next deploy</span></div>
-      <div class="form" style="margin-top:14px">
-        <div class="field"><label>Repository</label><input id="c-repo" type="text" value="${esc(a.repo)}" spellcheck="false"></div>
-        <div class="row2">
-          <div class="field"><label>Branch or tag</label><input id="c-ref" type="text" value="${esc(a.ref)}" spellcheck="false"></div>
-          <div class="field"><label>Dockerfile</label><input id="c-dockerfile" type="text" value="${esc(a.dockerfile)}" spellcheck="false"></div>
+    <details class="panel">
+      <summary>Pengaturan teknis</summary>
+      <div class="body">
+        <p class="note">Berlaku pada deploy berikutnya.</p>
+        <form class="form" id="cfg" style="gap:16px">
+          <div class="field"><label for="c-repo">Alamat kode</label><input id="c-repo" type="text" value="${esc(a.repo)}" spellcheck="false"></div>
+          <div class="row2">
+            <div class="field"><label for="c-ref">Cabang atau tag</label><input id="c-ref" type="text" value="${esc(a.ref)}" spellcheck="false"></div>
+            <div class="field"><label for="c-port">Port container</label><input id="c-port" type="number" value="${a.port}"></div>
+          </div>
+          <div class="row2">
+            <div class="field"><label for="c-dockerfile">Dockerfile</label><input id="c-dockerfile" type="text" value="${esc(a.dockerfile)}" spellcheck="false"></div>
+            <div class="field"><label for="c-ctx">Folder build</label><input id="c-ctx" type="text" value="${esc(a.context)}" placeholder="." spellcheck="false"></div>
+          </div>
+          <div class="row2">
+            <div class="field"><label for="c-domain">Domain</label><input id="c-domain" type="text" value="${esc(a.domain)}" spellcheck="false"></div>
+            <div class="field"><label for="c-health">Alamat pengecekan</label><input id="c-health" type="text" value="${esc(a.health_path)}" placeholder="/ atau tcp" spellcheck="false"></div>
+          </div>
+          <div class="actions"><button class="btn small" type="submit">Simpan konfigurasi</button><span class="err ok" id="cfgerr"></span></div>
+        </form>
+        <div class="note" id="hook" style="margin-top:16px"></div>
+        <div class="actions" style="margin-top:22px">
+          <button class="btn small ghost" id="destroy" style="color:var(--danger)">Hapus aplikasi ini</button>
         </div>
-        <div class="row2">
-          <div class="field"><label>Build context</label><input id="c-ctx" type="text" value="${esc(a.context)}" placeholder="." spellcheck="false"></div>
-          <div class="field"><label>Container port</label><input id="c-port" type="number" value="${a.port}"></div>
-        </div>
-        <div class="row2">
-          <div class="field"><label>Domain</label><input id="c-domain" type="text" value="${esc(a.domain)}" spellcheck="false"></div>
-          <div class="field"><label>Health path</label><input id="c-health" type="text" value="${esc(a.health_path)}" placeholder="/ or tcp" spellcheck="false"></div>
-        </div>
-        <div class="actions">
-          <button class="btn small" id="savecfg">Save configuration</button>
-          <button class="btn small ghost" id="destroy" style="margin-left:auto;color:var(--fail)">Delete app</button>
-          <span class="err" id="cfgerr"></span>
-        </div>
-        <div class="hint" id="hook"></div>
       </div>
-    </div>
-  </div>`;
+    </details>
 
-  shell(a.name, `<div class="where">app · <b>${esc(a.name)}</b> · ${esc(a.status)}</div>`, body);
+    <div class="actions" style="margin-top:30px"><a class="btn ghost small" href="#/">← Semua aplikasi</a></div>
+    ${sig}`;
 
+  frame(body, 'apps');
+
+  root.querySelector('#open').addEventListener('click', () => {
+    const u = detail.app.url || (liveDeploy() && liveDeploy().url);
+    if (u) window.open(u, '_blank', 'noreferrer');
+  });
   root.querySelector('#deploy').addEventListener('click', async (e) => {
     e.target.disabled = true;
     try {
       await api('/api/apps/' + encodeURIComponent(name) + '/deploy', { method: 'POST' });
+      selected = null;
       poll();
     } catch (err) {
-      alert(err.message);   // e.g. 409 while another deploy of this app runs
+      alert(err.message);
     } finally {
       setTimeout(() => { e.target.disabled = false; }, 1500);
     }
   });
-  root.querySelector('#logs').addEventListener('click', async () => {
-    const out = await api('/api/apps/' + encodeURIComponent(name) + '/logs');
-    selected = null;
-    detail.logs = out.logs || '(no output)';
-    renderDetailParts(true);
-  });
   if (!Object.keys(a.env || {}).length) root.querySelector('#env').innerHTML = envRow('', '');
   root.querySelector('#addenv').addEventListener('click', () => {
-    const tb = root.querySelector('#env');
-    tb.insertAdjacentHTML('beforeend', envRow('', ''));
+    root.querySelector('#env').insertAdjacentHTML('beforeend', envRow('', ''));
   });
   root.querySelector('#saveenv').addEventListener('click', async () => {
     const env = {};
     root.querySelectorAll('#env tr').forEach((tr) => {
       const k = tr.querySelector('.ek').value.trim();
-      const v = tr.querySelector('.ev').value;
-      if (k) env[k] = v;
+      if (k) env[k] = tr.querySelector('.ev').value;
     });
     try {
       await api('/api/apps/' + encodeURIComponent(name), { method: 'PUT', body: JSON.stringify({ env }) });
-      root.querySelector('#enverr').textContent = 'saved';
+      root.querySelector('#enverr').textContent = 'tersimpan';
       setTimeout(() => (root.querySelector('#enverr').textContent = ''), 2500);
-    } catch (err) { root.querySelector('#enverr').textContent = err.message; }
+    } catch (err) { root.querySelector('#enverr').className = 'err'; root.querySelector('#enverr').textContent = err.message; }
   });
-  root.querySelector('#savecfg').addEventListener('click', async () => {
+  root.querySelector('#cfg').addEventListener('submit', async (e) => {
+    e.preventDefault();
     try {
       await api('/api/apps/' + encodeURIComponent(name), {
         method: 'PUT',
@@ -323,141 +405,197 @@ async function renderApp(name) {
         }),
       });
       renderApp(name);
-    } catch (err) { root.querySelector('#cfgerr').textContent = err.message; }
+    } catch (err) { root.querySelector('#cfgerr').className = 'err'; root.querySelector('#cfgerr').textContent = err.message; }
   });
   root.querySelector('#destroy').addEventListener('click', async () => {
-    if (!confirm('Delete ' + name + '? Containers are removed. Database volume is kept unless you pass data=1 via the API.')) return;
+    if (!confirm('Hapus ' + name + '? Containernya dihentikan. Volume database tetap disimpan.')) return;
     await api('/api/apps/' + encodeURIComponent(name), { method: 'DELETE' });
     location.hash = '#/';
   });
-  root.querySelector('#hook').textContent = 'webhook: POST /api/webhook/' + name + '?token=<app token>';
+  root.querySelector('#hook').textContent = 'Untuk deploy otomatis dari git: POST /api/webhook/' + name + '?token=<token aplikasi>';
   renderDetailParts();
   poll();
 }
 
+function liveDeploy() {
+  return detail && detail.deploys.find((d) => d.live);
+}
+
 function envRow(k, v) {
   return `<tr>
-    <td><input class="ek" type="text" value="${esc(k)}" placeholder="KEY" spellcheck="false"></td>
-    <td><input class="ev" type="text" value="${esc(v)}" placeholder="value" spellcheck="false"></td>
-    <td><button class="btn small ghost del" onclick="this.closest('tr').remove()" aria-label="remove variable" title="remove">×</button></td>
+    <td><input class="ek" type="text" value="${esc(k)}" placeholder="NAMA" spellcheck="false"></td>
+    <td><input class="ev" type="text" value="${esc(v)}" placeholder="nilai" spellcheck="false"></td>
+    <td><button class="btn small ghost del" type="button" onclick="this.closest('tr').remove()" aria-label="hapus variabel" title="hapus">×</button></td>
   </tr>`;
 }
 
 function renderDetailParts(forceLog) {
   const a = detail.app;
-  const live = detail.deploys.find((d) => d.live);
-  const bs = root.querySelector('#b-status');
-  bs.textContent = (a.status || 'none').toUpperCase();
-  bs.className = 'v ' + (a.status || '');
-  root.querySelector('#b-deploy').textContent = live ? live.id : '—';
-  root.querySelector('#b-commit').textContent = (live && live.commit) || '—';
-  root.querySelector('#b-port').textContent = live && live.port ? String(live.port) : '—';
+  const live = liveDeploy();
+  const s = a.status || 'none';
 
-  const list = root.querySelector('#deploys');
+  const verdict = root.querySelector('#verdict');
+  if (!verdict) return;
+  verdict.textContent = VERDICT[s] || s;
+  verdict.className = 'verdict ' + s;
+
+  const why = root.querySelector('#why');
+  if (s === 'ready') {
+    why.textContent = localOnly(a.url)
+      ? 'Berjalan di server ini. Alamat di bawah hanya bisa dibuka dari server; tambahkan domain supaya bisa dibuka dari komputer lain.'
+      : 'Siapa pun di jaringan ini bisa membukanya lewat alamat di bawah.';
+  } else if (s === 'failed') {
+    why.textContent = (live && live.error) ? live.error : 'Buka "Catatan build" untuk melihat bagian mana yang gagal.';
+  } else if (s === 'none') {
+    why.textContent = 'Tekan "Bangun ulang" untuk membangun dan menjalankannya.';
+  } else {
+    why.textContent = 'Biasanya selesai dalam satu sampai tiga menit. Halaman ini memperbarui sendiri.';
+  }
+
+  const openBtn = root.querySelector('#open');
+  openBtn.disabled = !a.url;
+  openBtn.style.display = a.url ? '' : 'none';
+  const addr = root.querySelector('#addr');
+  addr.innerHTML = a.url
+    ? `Alamat: <a href="${esc(a.url)}" target="_blank" rel="noreferrer">${esc(a.url)}</a>`
+    : 'Belum punya alamat — tambahkan domain di pengaturan teknis.';
+
   const rows = detail.deploys.map((d) => `
-    <div class="deploy ${d.id === selected ? 'sel' : ''}" data-id="${esc(d.id)}">
+    <div class="row ${d.id === selected ? 'sel' : ''}" data-id="${esc(d.id)}">
       <div>
-        <div class="id">${d.live ? '● ' : ''}${esc(d.id)}</div>
-        <div class="sub"><span>${esc(d.commit || 'no commit')}</span><span>${new Date(d.started).toLocaleTimeString()}</span></div>
+        <div class="when">${esc(ago(d.started))}${d.live ? '<em>dipakai sekarang</em>' : ''}</div>
+        <div class="meta">
+          <span>${esc(d.commit && d.commit !== 'unknown' ? d.commit.slice(0, 7) : 'tanpa commit')}</span>
+          <span>${esc(d.id)}</span>
+        </div>
       </div>
-      <div class="right"><span class="bracket ${d.status}">[${esc(d.status.toUpperCase())}]</span></div>
-    </div>`).join('');
-  if (list.dataset.sig !== rows) { list.innerHTML = rows; list.dataset.sig = rows; }
-  list.querySelectorAll('.deploy').forEach((n) => n.addEventListener('click', () => {
-    selected = n.dataset.id;
-    renderDetailParts(true);
-  }));
-  root.querySelector('#count').textContent = detail.deploys.length + ' total';
+      <div class="right">
+        <span class="bracket ${esc(d.status)}">${esc((STATE[d.status] || d.status).toUpperCase())}</span>
+        ${!d.live && d.status === 'ready' && d.image ? `<button class="btn small" data-roll="${esc(d.id)}" type="button">Pakai versi ini</button>` : ''}
+      </div>
+    </div>`).join('') || `<p class="note">Belum ada riwayat. Tekan "Bangun ulang" untuk memulai yang pertama.</p>`;
+
+  const hist = root.querySelector('#hist');
+  if (hist.dataset.sig !== rows) {
+    hist.innerHTML = rows;
+    hist.dataset.sig = rows;
+    hist.querySelectorAll('.row').forEach((n) => n.addEventListener('click', (e) => {
+      if (e.target.closest('[data-roll]')) return;
+      selected = n.dataset.id;
+      renderDetailParts(true);
+    }));
+    hist.querySelectorAll('[data-roll]').forEach((b) => b.addEventListener('click', async () => {
+      b.disabled = true;
+      try {
+        await api('/api/apps/' + encodeURIComponent(detail.app.name) + '/rollback', {
+          method: 'POST', body: JSON.stringify({ deploy: b.dataset.roll }),
+        });
+        selected = null;
+        poll();
+      } catch (err) { alert(err.message); }
+      finally { b.disabled = false; renderDetailParts(); }
+    }));
+  }
 
   const cur = selected ? detail.deploys.find((d) => d.id === selected) : null;
   const log = root.querySelector('#log');
+  const title = root.querySelector('#logtitle');
+  if (!log) return;
   let text;
-  if (cur) { text = cur.log || '(waiting for output)'; root.querySelector('#logtitle').innerHTML = 'Build log · <span class="lit">' + esc(cur.id) + '</span>'; }
-  else { text = detail.logs || '(no container output yet)'; root.querySelector('#logtitle').textContent = 'App logs'; }
-  const running = cur && ['queued', 'building', 'starting'].includes(cur.status);
-  root.querySelector('#livetag').textContent = running ? '[running]' : '';
-  const rb = root.querySelector('#rollback');
-  const canRoll = cur && !cur.live && cur.status === 'ready' && cur.image;
-  rb.style.display = canRoll ? '' : 'none';
-  rb.disabled = !!inFlight;
-  if (canRoll) rb.onclick = async () => {
-    inFlight = true;
-    try {
-      await api('/api/apps/' + encodeURIComponent(decodeURIComponent(location.hash.replace('#/app/', ''))) + '/rollback',
-        { method: 'POST', body: JSON.stringify({ deploy: cur.id }) });
-      selected = null;
-      poll();
-    } catch (err) { alert(err.message); }
-    finally { inFlight = false; renderDetailParts(); }
-  };
+  if (cur) {
+    text = cur.log || '(belum ada keluaran)';
+    title.innerHTML = 'Catatan versi <b class="mono">' + esc(cur.id) + '</b>';
+  } else {
+    text = detail.logs || '(aplikasi belum mengeluarkan apa pun)';
+    title.textContent = 'Keluaran aplikasi yang sedang jalan:';
+  }
   const atBottom = log.scrollTop + log.clientHeight >= log.scrollHeight - 40;
   if (log.textContent !== text) { log.textContent = text; if (atBottom || forceLog) log.scrollTop = log.scrollHeight; }
 }
 
 function poll() {
   clearInterval(timer);
-  let fast = 2500;
+  let every = 2500;
   timer = setInterval(async () => {
-    const name = location.hash.replace('#/app/', '');
-    if (!name) return;
+    const m = location.hash.match(/^#\/app\/([^?]+)/);
+    if (!m) return;
     try {
-      const data = await api('/api/apps/' + encodeURIComponent(decodeURIComponent(name)));
+      const data = await api('/api/apps/' + encodeURIComponent(decodeURIComponent(m[1])));
       detail = data;
       renderDetailParts();
       const active = data.deploys.some((d) => ['queued', 'building', 'starting'].includes(d.status));
-      if (!active && fast !== 8000) { clearInterval(timer); fast = 8000; poll(); }
+      if (!active && every !== 8000) { clearInterval(timer); every = 8000; poll(); return; }
       if (active) {
         const cur = selected && data.deploys.find((d) => d.id === selected);
         if (cur && ['ready', 'failed'].includes(cur.status)) refresh();
       }
     } catch (e) { /* keep the last view */ }
-  }, fast);
+  }, every);
 }
 
 /* ---------- settings ---------- */
 function renderSettings() {
   clearInterval(timer);
   const body = `
-  <div class="wrap">
-    <div class="head"><div><h1>Settings</h1><div class="meta"><span>account ${esc(st.user)}</span><span>${esc(st.host)}</span></div></div></div>
-    <div class="form" style="margin-top:26px">
-      <div class="field"><label>Current passphrase</label><input id="cur" type="password" autocomplete="current-password"></div>
-      <div class="field"><label>New passphrase</label><input id="next" type="password" autocomplete="new-password"><small>at least 8 characters</small></div>
-      <div class="actions"><button class="btn small" id="savepw">Change passphrase</button><span class="err" id="pwerr"></span></div>
-      <div class="hint">State lives in the data directory as one JSON file. Containers, images and the database volume live in Docker. Nothing is sent anywhere else.</div>
+    <div class="lede">
+      <h1>Pengaturan.</h1>
+      <p>Ganti kata sandi portal. Semua data ada di folder data pada server ini; tidak ada yang dikirim ke luar.</p>
     </div>
-  </div>`;
-  shell('', `<div class="where">control plane · <b>${esc(st.user)}</b></div>`, body);
-  root.querySelector('#savepw').addEventListener('click', async () => {
+    <form class="form" id="pw" style="max-width:420px">
+      <div class="field"><label for="cur">Kata sandi sekarang</label><input id="cur" type="password" autocomplete="current-password"></div>
+      <div class="field"><label for="next">Kata sandi baru</label><input id="next" type="password" autocomplete="new-password"><small>minimal 8 karakter</small></div>
+      <div class="actions"><button class="btn small" type="submit">Ganti kata sandi</button><span class="err ok" id="pwerr"></span></div>
+    </form>
+    <details class="panel" style="margin-top:34px">
+      <summary>Status server</summary>
+      <div class="body">
+        <div class="hist">
+          <div class="row" style="cursor:default"><div class="when">Nama server</div><div class="right mono">${esc(st.host || '—')}</div></div>
+          <div class="row" style="cursor:default"><div class="when">Docker</div><div class="right mono">${esc(st.docker || 'tidak terdeteksi')}</div></div>
+          <div class="row" style="cursor:default"><div class="when">Domain otomatis</div><div class="right mono">${st.caddy ? 'aktif' : 'belum dipasang'}</div></div>
+          <div class="row" style="cursor:default"><div class="when">Versi shoal deploy</div><div class="right mono">v${esc(String(st.version || '').replace(/^v/, ''))}</div></div>
+        </div>
+      </div>
+    </details>
+    ${sig}`;
+  frame(body, 'settings');
+  root.querySelector('#pw').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const out = root.querySelector('#pwerr');
+    out.className = 'err ok';
     try {
       await api('/api/password', {
         method: 'POST',
         body: JSON.stringify({ current: root.querySelector('#cur').value, next: root.querySelector('#next').value }),
       });
-      root.querySelector('#pwerr').textContent = 'changed';
+      out.textContent = 'kata sandi diganti';
       root.querySelector('#cur').value = '';
       root.querySelector('#next').value = '';
-    } catch (err) { root.querySelector('#pwerr').textContent = err.message; }
+    } catch (err) { out.className = 'err'; out.textContent = err.message; }
   });
 }
 
 /* ---------- router ---------- */
 async function boot() {
-  try {
-    st = await api('/api/overview');
-  } catch (e) { return; }
+  try { st = await api('/api/overview'); } catch (e) { return; }
   route();
 }
 
 async function route() {
+  if (!st.user) {
+    try { st = await api('/api/overview'); } catch (e) { return renderLogin(); }
+  }
   const h = location.hash || '#/';
-  if (!st.user) return renderLogin();
-  if (h === '#/' || h === '') return renderHome();
-  if (h === '#/new') return renderNew();
-  if (h === '#/settings') return renderSettings();
-  if (h.startsWith('#/app/')) return renderApp(decodeURIComponent(h.slice(6)));
+  if (h.startsWith('#/new')) return renderNew();
+  if (h.startsWith('#/settings')) return renderSettings();
+  if (h.startsWith('#/app/')) return renderApp(decodeURIComponent(h.slice(6).split('?')[0]));
   return renderHome();
 }
 
-window.addEventListener('hashchange', () => { clearInterval(timer); route().catch((e) => { root.innerHTML = `<div class="wrap"><div class="err">${esc(e.message)}</div></div>`; }); });
+window.addEventListener('hashchange', () => {
+  clearInterval(timer);
+  route().catch((e) => {
+    root.innerHTML = `<main class="page"><div class="err">${esc(e.message)}</div><p><a class="btn ghost small" href="#/">Kembali</a></p></main>`;
+  });
+});
 boot();

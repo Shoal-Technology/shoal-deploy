@@ -24,19 +24,31 @@ Satu perintah deploy menjalankan empat langkah berurutan. Kalau salah satu gagal
 
 ## Portal
 
+Portal ini dibuat untuk dipakai orang yang tidak ingin membaca dokumentasi dulu. Tidak ada istilah `ready`, `queued`, atau `rollout`. Yang muncul: **Sedang jalan**, **Sedang dibangun**, **Gagal** — dan satu tombol yang jelas di setiap layar.
+
 <div align="center">
 
 <img src="assets/shot-overview.png" alt="Daftar aplikasi" width="100%">
 
 </div>
 
-Satu layar per app: status, commit yang jalan, riwayat deploy, log build, environment, dan konfigurasi. Tidak ada tab tersembunyi, tidak ada wizard.
+Tambah aplikasi cuma dua pertanyaan: mau disebut apa, dan kodenya di mana. Port, Dockerfile, folder build, dan health check ada di **pengaturan lanjutan** yang tertutup — bukan di depan orang yang baru pertama pakai.
+
+<div align="center">
+
+<img src="assets/shot-empty.png" alt="Keadaan kosong, tiga langkah pertama" width="100%">
+
+</div>
+
+Server yang masih kosong tidak menampilkan halaman putih. Ada tiga langkah yang menjelaskan apa yang akan terjadi, plus tombol "Coba contoh dulu" yang mengisi formulir dengan contoh supaya bisa dilihat dulu sebelum punya repo.
 
 <div align="center">
 
 <img src="assets/shot-app.png" alt="Detail aplikasi, log build, riwayat deploy" width="100%">
 
 </div>
+
+Satu layar per app: satu kesimpulan besar di atas (*"Aplikasi jalan."*), alamat yang bisa dibuka, riwayat versi, catatan build, variabel lingkungan, dan pengaturan teknis. Kalau alamatnya masih `127.0.0.1:xxxxx`, portal bilang terus terang bahwa alamat itu hanya bisa dibuka dari server — bukan membiarkan orang mengira aplikasinya rusak.
 
 ---
 
@@ -131,10 +143,10 @@ repo (git)  →  docker build  →  container baru di port acak  →  health che
 
 ## Yang bisa dilakukan dari portal
 
-- **Apps** — daftar app, status live, commit yang sedang jalan, port.
-- **Deploy & log** — tombol deploy, log build live, log container.
-- **Riwayat & rollback** — setiap deploy tercatat dengan commit, status, dan waktu.
-- **Environment** — variabel per app, di-inject saat container dijalankan.
+- **Daftar aplikasi** — semua yang berjalan di server ini, hidup atau tidak.
+- **Bangun ulang** — build ulang dari repo, log build tampil sambil jalan.
+- **Riwayat & rollback** — setiap deploy tercatat dengan commit, status, dan waktu; satu tombol "Pakai versi ini" untuk kembali.
+- **Variabel lingkungan** — pasangan nama/nilai per app, disimpan di server dan di-inject saat container dijalankan.
 - **PostgreSQL satu klik** — container `postgres:17-alpine` dengan volume sendiri, `DATABASE_URL` otomatis masuk ke app.
 - **Webhook** — `POST /api/webhook/<app>?token=<token app>` untuk memicu deploy dari CI.
 
