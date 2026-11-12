@@ -81,6 +81,15 @@ curl -fsSL https://raw.githubusercontent.com/Shoal-Technology/shoal-deploy/main/
 
 Skripnya memasang Docker, Caddy (opsional), binary, lalu mendaftarkan service: OpenRC `shoal-deploy` di Alpine, systemd di Debian/Ubuntu. Portal default hanya mendengarkan di `127.0.0.1:7700`.
 
+Yang perlu tersedia sebelum install:
+
+- **Root** (`sudo -i` atau `doas`)
+- **Alpine 3.19–3.23** atau **Debian/Ubuntu** — distro lain tetap jalan, tapi Docker dan git harus dipasang manual lalu skrip diulang dengan `--no-docker`
+- **1 GB RAM, 8 GB disk** — Docker image app menempati disk paling banyak
+- **Internet** saat install pertama (binary + paket). Tanpa internet, pakai bundle offline di bagian bawah
+- **Port 7700** (portal), **80/443** kalau memakai domain lewat Caddy
+- **Domain internal** yang A-record-nya menunjuk ke IP VM, kalau ingin URL rapi. Tanpa DNS, pakai `--tls-internal`
+
 Mau langsung dari LAN kantor:
 
 ```sh
