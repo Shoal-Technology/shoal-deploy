@@ -304,6 +304,29 @@ func (d *Deployer) ensureDB(ctx context.Context, app App, logf func(string, ...a
 	return err
 }
 
+// caddySysDir is where a package install keeps the Caddyfile caddy reads on
+// boot. A variable so the choice can be tested without touching /etc.
+var caddySysDir = "/etc/caddy"
+
+// caddyfilePath returns the file caddy loads at boot: the package default when
+// the system dir exists, otherwise a hand-run file inside the data dir.
+func (d *Deployer) caddyfilePath() string {
+	if _, err := os.Stat(caddySysDir); err == nil {
+		return filepath.Join(caddySysDir, "Caddyfile")
+	}
+	return filepath.Join(d.dataDir, "Caddyfile")
+}
+
+// routesPath is our own file. Keeping routes apart from the main Caddyfile means
+// an office box that already uses Caddy for something else does not lose its
+// config: we add an import line and leave the rest alone.
+func (d *Deployer) routesPath() string {
+	if _, err := os.Stat(caddySysDir); err == nil {
+		return filepath.Join(caddySysDir, "shoal-deploy.caddy")
+	}
+	return d.caddyfilePath()
+}
+
 // writeCaddy renders one Caddyfile for every app with a domain and reloads Caddy.
 func (d *Deployer) writeCaddy() error {
 	if d.caddy == "" {
@@ -323,25 +346,70 @@ func (d *Deployer) writeCaddy() error {
 				continue
 			}
 			if d.tlsInternal {
-				fmt.Fprintf(&b, "%s {\n\ttls internal\n\treverse_proxy 127.0.0.1:%d\n}\n\n", a.Domain, dep.Port)
+				fmt.Fprintf(&b, "%s {\n	tls internal\n	reverse_proxy 127.0.0.1:%d\n}\n\n", a.Domain, dep.Port)
 			} else {
-				fmt.Fprintf(&b, "%s {\n\treverse_proxy 127.0.0.1:%d\n}\n\n", a.Domain, dep.Port)
+				fmt.Fprintf(&b, "%s {\n	reverse_proxy 127.0.0.1:%d\n}\n\n", a.Domain, dep.Port)
 			}
 		}
 	})
-	// Caddy rejects a completely empty Caddyfile ("adapting config: EOF"), so an
-	// install with no domains yet still gets a valid config that serves nothing.
+	// Caddy rejects an empty config ("adapting config: EOF"), so an install with
+	// no domains yet still gets a valid file that serves nothing.
 	if b.Len() == 0 {
-		b.WriteString("{\n	admin localhost:2019\n}\n")
+		b.WriteString("# no domains yet\n")
 	}
-	path := filepath.Join(d.dataDir, "Caddyfile")
-	if err := os.WriteFile(path, []byte(b.String()), 0o644); err != nil {
+	routes := d.routesPath()
+	if err := os.WriteFile(routes, []byte(b.String()), 0o644); err != nil {
 		return err
 	}
-	return streamCmd(context.Background(), func(string, ...any) {}, d.caddy, "reload", "--config", path, "--adapter", "caddyfile")
+	main := d.caddyfilePath()
+	if routes != main {
+		if err := d.importRoutes(main, routes); err != nil {
+			return err
+		}
+	}
+	// reload only reaches a running instance; when caddy is installed but never
+	// started (no init script, fresh boot) fall back to starting it detached.
+	if err := streamCmd(context.Background(), func(string, ...any) {}, d.caddy, "reload", "--config", main, "--adapter", "caddyfile"); err != nil {
+		return runDetached(d.caddy, "start", "--config", main, "--adapter", "caddyfile")
+	}
+	return nil
+}
+
+// importRoutes makes sure the main Caddyfile pulls in our file, appending the
+// import once and never touching whatever else lives in there. The glob matters:
+// a plain import of a missing file makes caddy refuse to start at all, which on
+// an office box means every site dies. A glob only warns.
+func (d *Deployer) importRoutes(main, routes string) error {
+	line := "import " + strings.TrimSuffix(routes, ".caddy") + "*.caddy"
+	cur, err := os.ReadFile(main)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	if strings.Contains(string(cur), line) {
+		return nil
+	}
+	next := string(cur)
+	if next != "" && !strings.HasSuffix(next, "\n") {
+		next += "\n"
+	}
+	next += "\n# added by shoal-deploy\n" + line + "\n"
+	return os.WriteFile(main, []byte(next), 0o644)
 }
 
 // --- helpers ---
+
+// runDetached starts a server process and returns as soon as it is up, without
+// waiting for its output: `caddy start` forks and keeps the pipe open, so
+// streaming it would block the caller forever.
+func runDetached(name string, args ...string) error {
+	cmd := exec.Command(name, args...)
+	cmd.Stdout = nil
+	cmd.Stderr = nil
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	return cmd.Process.Release()
+}
 
 func streamCmd(ctx context.Context, logf func(string, ...any), name string, args ...string) error {
 	cmd := exec.CommandContext(ctx, name, args...)

@@ -278,3 +278,56 @@ func TestFailedFirstDeployShowsAsFailed(t *testing.T) {
 		t.Fatalf("deploy = %q, want newest deploy of that app", got)
 	}
 }
+
+func TestCaddyfileGoesWhereCaddyReadsIt(t *testing.T) {
+	// A package install reloads /etc/caddy/Caddyfile on boot. Writing the routes
+	// anywhere else means every domain dies at the first reboot.
+	sys := t.TempDir()
+	old := caddySysDir
+	caddySysDir = sys
+	defer func() { caddySysDir = old }()
+
+	d := &Deployer{dataDir: t.TempDir()}
+	want := filepath.Join(sys, "Caddyfile")
+	if got := d.caddyfilePath(); got != want {
+		t.Fatalf("caddyfilePath = %q, want %q", got, want)
+	}
+
+	// No /etc/caddy (hand-run setup): fall back to the data dir.
+	caddySysDir = filepath.Join(sys, "missing")
+	if got := d.caddyfilePath(); got != filepath.Join(d.dataDir, "Caddyfile") {
+		t.Fatalf("fallback caddyfilePath = %q", got)
+	}
+}
+
+func TestImportLineIsAddedOnceAndKeepsExistingConfig(t *testing.T) {
+	sys := t.TempDir()
+	old := caddySysDir
+	caddySysDir = sys
+	defer func() { caddySysDir = old }()
+
+	main := filepath.Join(sys, "Caddyfile")
+	existing := "# my own sites\nwiki.kantor.local {\n\treverse_proxy 127.0.0.1:9000\n}\n"
+	if err := os.WriteFile(main, []byte(existing), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	d := &Deployer{dataDir: t.TempDir()}
+	routes := d.routesPath()
+
+	// twice, as every deploy calls writeCaddy
+	for i := 0; i < 2; i++ {
+		if err := d.importRoutes(main, routes); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := os.ReadFile(main)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(got), existing) {
+		t.Fatalf("existing config was lost:\n%s", got)
+	}
+	if n := strings.Count(string(got), "import "+strings.TrimSuffix(routes, ".caddy")+"*.caddy"); n != 1 {
+		t.Fatalf("import appears %d times, want 1:\n%s", n, got)
+	}
+}

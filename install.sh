@@ -105,7 +105,10 @@ note "git: $(git --version)"
 if [ "$DO_CADDY" = 1 ] && ! command -v caddy >/dev/null 2>&1; then
   echo "installing caddy"
   if [ "$PKG" = "apk" ]; then
-    apk_install caddy 2>/dev/null || note "caddy: not installed (optional)"
+    # the caddy package ships the binary and a Caddyfile but no init script;
+    # without caddy-openrc nothing ever starts on boot and domains stay dark
+    apk_install caddy caddy-openrc || apk_install caddy ||
+      note "caddy: not installed (optional)"
   else
     apt-get install -y -qq caddy >/dev/null 2>&1 || note "caddy: not installed (optional)"
   fi
@@ -113,10 +116,23 @@ fi
 if command -v caddy >/dev/null 2>&1; then
   note "caddy: $(caddy version | head -1)"
   if [ "$PKG" = "apk" ]; then
+    # Alpine's caddy-openrc runs `caddy run $caddy_opts` and ships no
+    # /etc/conf.d/caddy, so caddy would start with an empty config and answer
+    # nothing on 80/443. Point it at the file shoal-deploy writes.
+    mkdir -p /etc/conf.d
+    if [ ! -f /etc/conf.d/caddy ]; then
+      echo "caddy_opts=\"--config /etc/caddy/Caddyfile --adapter caddyfile\"" > /etc/conf.d/caddy
+    fi
     rc-update add caddy default >/dev/null 2>&1 || true
-    rc-service caddy start >/dev/null 2>&1 || true
+    rc-service caddy restart >/dev/null 2>&1 || rc-service caddy start >/dev/null 2>&1 || true
   else
     systemctl enable --now caddy >/dev/null 2>&1 || true
+  fi
+  # A binary with no working service is the worst case: the portal reports caddy
+  # present while every domain answers nothing. Say it instead of pretending.
+  if ! pgrep -x caddy >/dev/null 2>&1; then
+    note "caddy: installed but NOT running — domains will not answer"
+    note "  start it with: caddy start --config /etc/caddy/Caddyfile --adapter caddyfile"
   fi
 else
   note "caddy: off, apps stay on their published port"
