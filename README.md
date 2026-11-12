@@ -4,7 +4,7 @@
 
 **Deploy aplikasi dari git ke URL, di satu mesin kecil. Tanpa cluster, tanpa YAML, tanpa tagihan per menit.**
 
-`5.7 MB` binary statis · `~8 MB` RSS idle · `docker` + `caddy` · Alpine / Debian
+`5.9 MB` binary statis · `~9 MB` RSS idle · `docker` + `caddy` · Alpine / Debian
 
 </div>
 
@@ -22,6 +22,24 @@ Satu perintah deploy menjalankan empat langkah berurutan. Kalau salah satu gagal
 
 ---
 
+## Portal
+
+<div align="center">
+
+<img src="assets/shot-overview.png" alt="Daftar aplikasi" width="100%">
+
+</div>
+
+Satu layar per app: status, commit yang jalan, riwayat deploy, log build, environment, dan konfigurasi. Tidak ada tab tersembunyi, tidak ada wizard.
+
+<div align="center">
+
+<img src="assets/shot-app.png" alt="Detail aplikasi, log build, riwayat deploy" width="100%">
+
+</div>
+
+---
+
 ## Kenapa ada ini
 
 Vercel enak karena alurnya pendek: sambungkan repo, tunggu build, dapat URL, lihat log, rollback kalau rusak. Yang tidak enak: jalan di mesin orang lain, butuh internet, dan dihitung per pemakaian.
@@ -34,7 +52,7 @@ Ini **bukan** versi kecil dari orchestrator [Shoal](https://github.com/Shoal-Tec
 
 | Komponen | Peran | Ukuran |
 |---|---|---|
-| `shoal-deploy` | portal, API, build & deploy worker | 5.7 MB statis, ~8 MB RSS |
+| `shoal-deploy` | portal, API, build & deploy worker | 5.9 MB statis, ~9 MB RSS |
 | `docker` | build image, jalankan container, simpan volume | paket sistem |
 | `caddy` | TLS, domain, reverse proxy (opsional) | paket sistem |
 | `state.json` | daftar app, deploy, user — satu file | puluhan KB |
@@ -170,6 +188,8 @@ CGO_ENABLED=0 go build -o shoal-deploy .       # binary statis, tanpa cgo
 ```
 
 Butuh Go 1.22+. Satu-satunya dependensi non-stdlib: `golang.org/x/crypto` untuk bcrypt. SQLite tidak dipakai — state disimpan sebagai JSON dan ditulis atomik.
+
+Antarmuka ada di `portal/` (HTML + CSS + JS tanpa build step) dan di-embed ke binary dengan `go:embed`. Font (Archivo, IBM Plex, Geist Mono, Instrument Serif) ikut di-embed, lisensi OFL ada di `portal/fonts/`.
 
 ## Lisensi
 

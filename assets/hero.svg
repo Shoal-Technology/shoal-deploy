@@ -1,18 +1,20 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 320" width="1200" height="320" role="img" aria-label="Shoal Deploy">
   <style>
-    .bg { fill: #08080a; }
-    .wave { fill: none; stroke: #35470f; stroke-width: 1.3; opacity: .85; }
-    .wave.b { stroke: #2b3a11; }
-    .wave.c { stroke: #1d2a0c; }
+    .bg { fill: #06090c; }
+    .wave { fill: none; stroke: #1d3944; stroke-width: 1.3; opacity: .9; }
+    .wave.b { stroke: #162c34; }
+    .wave.c { stroke: #10222a; }
     .w1 { animation: drift 14s linear infinite; }
     .w2 { animation: drift 22s linear infinite reverse; }
     .w3 { animation: drift 30s linear infinite; }
     @keyframes drift { from { transform: translateX(0); } to { transform: translateX(-240px); } }
-    .word { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; fill: #e9e9ee; font-size: 46px; letter-spacing: 12px; font-weight: 600; }
-    .sub { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; fill: #85858f; font-size: 15px; letter-spacing: 2.2px; }
-    .tag { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; fill: #5b5b66; font-size: 12px; letter-spacing: 2px; }
-    .volt { fill: #bdfe0a; }
-    .rule { stroke: #1c1c21; stroke-width: 1; }
+    .word { font-family: "Archivo", "Arial Narrow", Arial, sans-serif; fill: #ecf3f5; font-size: 52px; letter-spacing: -1.6px; font-weight: 600; }
+    .sub { font-family: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace; fill: #a9bcc3; font-size: 14px; letter-spacing: 1.1px; }
+    .tag { font-family: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace; fill: #8ea3aa; font-size: 11px; letter-spacing: 2.2px; }
+    .ice { fill: #a5d9ec; }
+    .green { fill: #8febb0; }
+    .rule { stroke: rgba(165,217,236,.16); stroke-width: 1; }
+    .fish { fill: #a5d9ec; }
     .pulse { animation: pulse 2.6s ease-in-out infinite; }
     @keyframes pulse { 0%, 100% { opacity: .35; } 50% { opacity: 1; } }
     .travel { animation: travel 6s cubic-bezier(.6,0,.4,1) infinite; }
@@ -21,6 +23,7 @@
     .fade2 { animation: fade 3.4s ease-in-out .45s infinite; }
     .fade3 { animation: fade 3.4s ease-in-out .9s infinite; }
     @keyframes fade { 0%, 100% { opacity: .4; } 45% { opacity: 1; } }
+    @media (prefers-reduced-motion: reduce) { .w1,.w2,.w3,.pulse,.travel,.fade,.fade2,.fade3 { animation: none; } }
   </style>
 
   <defs>
@@ -30,23 +33,27 @@
       <stop offset="0.84" stop-color="#fff" stop-opacity="1"/>
       <stop offset="1" stop-color="#000" stop-opacity="0"/>
     </linearGradient>
-    <mask id="fade">
+    <mask id="fadeMask">
       <rect width="1200" height="320" fill="url(#edge)"/>
     </mask>
   </defs>
 
   <rect class="bg" width="1200" height="320"/>
 
-  <g mask="url(#fade)">
+  <g mask="url(#fadeMask)">
     <path class="wave w1" d="M-240 212 q 60 -26 120 0 t 120 0 t 120 0 t 120 0 t 120 0 t 120 0 t 120 0 t 120 0 t 120 0 t 120 0"/>
     <path class="wave b w2" d="M-240 236 q 60 -22 120 0 t 120 0 t 120 0 t 120 0 t 120 0 t 120 0 t 120 0 t 120 0 t 120 0 t 120 0"/>
     <path class="wave c w3" d="M-240 188 q 60 -30 120 0 t 120 0 t 120 0 t 120 0 t 120 0 t 120 0 t 120 0 t 120 0 t 120 0 t 120 0"/>
   </g>
 
-  <g transform="translate(72,96)">
-    <circle class="volt pulse" cx="5" cy="-13" r="5"/>
-    <text class="word" x="26" y="0">SHOAL DEPLOY</text>
-    <text class="sub" x="29" y="42">git &#8594; build &#8594; route, on one small box</text>
+  <g transform="translate(72,116)">
+    <g transform="translate(0,-46)">
+      <path class="fish" d="M0 0 h34 l-6 8 H0z"/>
+      <path class="fish" d="M5 12 h34 l-6 8 H5z" opacity=".8"/>
+      <path class="fish" d="M0 24 h34 l-6 8 H0z" opacity=".6"/>
+    </g>
+    <text class="word" x="0" y="0">shoal deploy</text>
+    <text class="sub" x="2" y="44">git &#8594; build &#8594; route, on one small box</text>
   </g>
 
   <g transform="translate(72,276)">
@@ -55,6 +62,6 @@
     <text class="tag fade" x="152" y="26">[HEALTH]</text>
     <text class="tag fade2" x="304" y="26">[ROUTE]</text>
     <text class="tag fade3" x="456" y="26">[LIVE]</text>
-    <circle class="volt travel" cx="0" cy="-0.5" r="2.6"/>
+    <circle class="green travel" cx="0" cy="-0.5" r="2.6"/>
   </g>
 </svg>

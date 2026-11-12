@@ -27,7 +27,11 @@ function renderLogin(msg = '') {
   root.innerHTML = `
   <div class="login-wrap">
     <form class="login" id="login">
-      <div class="mark"><b>SHOAL DEPLOY</b><span>${st.version ? 'v' + esc(String(st.version).replace(/^v/, '')) : ''}</span></div>
+      <div class="mark">
+        <b>shoal deploy</b>
+        <span>${st.version ? 'v' + esc(String(st.version).replace(/^v/, '')) : 'control plane'}</span>
+        <em>Build, run, route — one box.</em>
+      </div>
       <div class="field">
         <label for="u">User</label>
         <input id="u" type="text" value="admin" autocomplete="username" spellcheck="false">
@@ -68,7 +72,7 @@ function rail(active) {
     </a>`).join('') || '<div class="app-link"><span class="dot"></span><span class="sub">no apps yet</span></div>';
   return `
   <aside class="rail">
-    <div class="brand"><b>SHOAL DEPLOY</b><span>v${esc((st.version || '').replace(/^v/, ''))}</span><a class="new" href="#/new">+ new</a></div>
+    <div class="brand"><b>shoal</b><span>deploy · v${esc((st.version || '').replace(/^v/, ''))}</span><a class="new" href="#/new">+ new</a></div>
     <nav class="app-list">${items}</nav>
     <div class="rail-foot">
       <div>${esc(st.host)}</div>
@@ -93,22 +97,24 @@ async function renderHome() {
     <div class="wrap">
       <div class="head"><div>
         <h1>Applications</h1>
-        <div class="meta"><span>${st.apps.length} app${st.apps.length === 1 ? '' : 's'}</span><span>${st.apps.filter((a) => a.status === 'ready').length} live</span></div>
-      </div><a class="btn primary" href="#/new">+ New app</a></div>
+        <div class="meta"><span>${st.apps.length} app${st.apps.length === 1 ? '' : 's'}</span><span>·</span><span>${st.apps.filter((a) => a.status === 'ready').length} live</span></div>
+      </div><a class="btn primary" href="#/new">+ new app</a></div>
       <div class="deploys" style="margin-top:26px">
         ${st.apps.map((a) => `
           <a class="deploy" href="#/app/${encodeURIComponent(a.name)}">
-            <div><div class="id">${esc(a.name)}</div>
+            <div><div class="id nm">${esc(a.name)}</div>
               <div class="sub"><span>${esc(a.repo || a.image || 'no repository')}</span><span>${esc(a.url || a.domain || 'no route')}</span></div></div>
             <div class="right"><span class="bracket ${a.status}">[${esc((a.status || 'none').toUpperCase())}]</span></div>
           </a>`).join('')}
       </div>
     </div>` : `
     <div class="wrap"><div class="empty-state">
-      <h1>Nothing deployed yet.</h1>
+      <h1>Nothing deployed<i>yet.</i></h1>
       <p>Point an app at a git repository with a Dockerfile. Shoal Deploy builds it, runs it as a container, health-checks it and puts it behind a route — no pipeline files, no cluster.</p>
-      <a class="btn primary" href="#/new">+ New app</a>
-    </div></div>`;
+      <a class="btn primary" href="#/new">+ new app</a>
+    </div>
+    <footer class="sig"><span>shoal deploy · ${esc(st.host)}</span><span>docker ${esc(st.docker)} · caddy ${st.caddy ? 'active' : 'off'}</span></footer>
+    </div>`;
   shell('', `<div class="where">control plane · <b>${esc(st.user)}</b></div>`, body);
 }
 
@@ -242,15 +248,15 @@ async function renderApp(name) {
     <div style="margin-top:40px">
       <div class="section-h"><h2>Configuration</h2><span class="tag">applied on the next deploy</span></div>
       <div class="form" style="margin-top:14px">
+        <div class="field"><label>Repository</label><input id="c-repo" type="text" value="${esc(a.repo)}" spellcheck="false"></div>
         <div class="row2">
-          <div class="field"><label>Repository</label><input id="c-repo" type="text" value="${esc(a.repo)}" spellcheck="false"></div>
           <div class="field"><label>Branch or tag</label><input id="c-ref" type="text" value="${esc(a.ref)}" spellcheck="false"></div>
+          <div class="field"><label>Dockerfile</label><input id="c-dockerfile" type="text" value="${esc(a.dockerfile)}" spellcheck="false"></div>
         </div>
         <div class="row2">
-          <div class="field"><label>Dockerfile</label><input id="c-dockerfile" type="text" value="${esc(a.dockerfile)}" spellcheck="false"></div>
           <div class="field"><label>Build context</label><input id="c-ctx" type="text" value="${esc(a.context)}" placeholder="." spellcheck="false"></div>
+          <div class="field"><label>Container port</label><input id="c-port" type="number" value="${a.port}"></div>
         </div>
-        <div class="field"><label>Container port</label><input id="c-port" type="number" value="${a.port}"></div>
         <div class="row2">
           <div class="field"><label>Domain</label><input id="c-domain" type="text" value="${esc(a.domain)}" spellcheck="false"></div>
           <div class="field"><label>Health path</label><input id="c-health" type="text" value="${esc(a.health_path)}" placeholder="/ or tcp" spellcheck="false"></div>
