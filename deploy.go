@@ -107,7 +107,7 @@ func (d *Deployer) run(id string, app App) {
 			os.RemoveAll(srcDir)
 			os.MkdirAll(srcDir, 0o755)
 			if err := streamCmd(ctx, logf, "git", "clone", "--depth", "1", app.Repo, srcDir); err != nil {
-				fail(fmt.Errorf("git clone failed: %w", err))
+				fail(fmt.Errorf("git clone failed: %w%s", err, cloneHint(err.Error())))
 				return
 			}
 		}
@@ -411,6 +411,40 @@ func runDetached(name string, args ...string) error {
 	return cmd.Process.Release()
 }
 
+// cloneHint turns git's own words into the one step an operator can take next.
+func cloneHint(msg string) string {
+	switch {
+	case strings.Contains(msg, "couldn't find remote ref"), strings.Contains(msg, "Remote branch"):
+		return " — that branch or tag does not exist: leave ref empty to use the default branch"
+	case strings.Contains(msg, "could not read Username"),
+		strings.Contains(msg, "Authentication failed"),
+		strings.Contains(msg, "Repository not found"),
+		strings.Contains(msg, "repository") && strings.Contains(msg, "not found"):
+		return " — the repository is private or the URL is wrong: this tool clones public repos only, so the URL must open in a browser without a login"
+	case strings.Contains(msg, "certificate"), strings.Contains(msg, "CAfile"):
+		return " — this host has no CA bundle: install ca-certificates (dnf install -y ca-certificates) and retry"
+	case strings.Contains(msg, "Could not resolve host"):
+		return " — DNS failed: this host cannot resolve github.com, check its resolver and outbound network"
+	}
+	return ""
+}
+
+// cmdError carries the last line a command printed, so a failure reports what
+// the tool itself said instead of a bare "exit status 128".
+type cmdError struct {
+	err  error
+	tail string
+}
+
+func (e *cmdError) Error() string {
+	if e.tail == "" {
+		return e.err.Error()
+	}
+	return e.tail + " (" + e.err.Error() + ")"
+}
+
+func (e *cmdError) Unwrap() error { return e.err }
+
 func streamCmd(ctx context.Context, logf func(string, ...any), name string, args ...string) error {
 	cmd := exec.CommandContext(ctx, name, args...)
 	pr, pw := newPipe()
@@ -419,15 +453,22 @@ func streamCmd(ctx context.Context, logf func(string, ...any), name string, args
 		return err
 	}
 	done := make(chan struct{})
+	var tail string
 	go func() {
 		for _, line := range readLines(pr) {
 			logf("[>] %s", line)
+			if s := strings.TrimSpace(line); s != "" {
+				tail = s // safe: read only after <-done
+			}
 		}
 		close(done)
 	}()
 	err := cmd.Wait()
 	pw.Close()
 	<-done
+	if err != nil && tail != "" {
+		return &cmdError{err: err, tail: tail}
+	}
 	return err
 }
 

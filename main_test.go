@@ -1,7 +1,9 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -329,5 +331,42 @@ func TestImportLineIsAddedOnceAndKeepsExistingConfig(t *testing.T) {
 	}
 	if n := strings.Count(string(got), "import "+strings.TrimSuffix(routes, ".caddy")+"*.caddy"); n != 1 {
 		t.Fatalf("import appears %d times, want 1:\n%s", n, got)
+	}
+}
+
+func TestCloneHint(t *testing.T) {
+	cases := map[string]string{
+		"fatal: repository 'https://github.com/x/y/' not found":                              "private or the URL is wrong",
+		"fatal: could not read Username for 'https://github.com': terminal prompts disabled": "private or the URL is wrong",
+		"fatal: Remote branch nope not found in upstream origin":                             "branch or tag does not exist",
+		"fatal: unable to access: server certificate verification failed. CAfile: none":      "no CA bundle",
+		"fatal: Could not resolve host: github.com":                                          "DNS failed",
+	}
+	for msg, want := range cases {
+		if got := cloneHint(msg); !strings.Contains(got, want) {
+			t.Errorf("cloneHint(%q) = %q, want it to mention %q", msg, got, want)
+		}
+	}
+	if got := cloneHint("something else entirely"); got != "" {
+		t.Errorf("unexpected hint for unknown error: %q", got)
+	}
+}
+
+func TestStreamCmdKeepsTheReason(t *testing.T) {
+	var logs []string
+	err := streamCmd(context.Background(), func(f string, a ...any) { logs = append(logs, fmt.Sprintf(f, a...)) },
+		"sh", "-c", "echo 'fatal: repository not found'; exit 128")
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "repository not found") || !strings.Contains(msg, "exit status 128") {
+		t.Fatalf("error lost the reason: %q", msg)
+	}
+	if len(logs) == 0 || !strings.Contains(logs[0], "repository not found") {
+		t.Fatalf("output was not streamed: %v", logs)
+	}
+	if h := cloneHint(msg); !strings.Contains(h, "private or the URL is wrong") {
+		t.Fatalf("hint missing, got %q", h)
 	}
 }
