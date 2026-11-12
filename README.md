@@ -10,6 +10,18 @@
 
 ---
 
+## Alur
+
+<div align="center">
+
+<img src="assets/flow.svg" alt="git → build → health → route" width="100%">
+
+</div>
+
+Satu perintah deploy menjalankan empat langkah berurutan. Kalau salah satu gagal, versi lama tetap melayani — tidak ada jendela downtime karena deploy yang rusak.
+
+---
+
 ## Kenapa ada ini
 
 Vercel enak karena alurnya pendek: sambungkan repo, tunggu build, dapat URL, lihat log, rollback kalau rusak. Yang tidak enak: jalan di mesin orang lain, butuh internet, dan dihitung per pemakaian.

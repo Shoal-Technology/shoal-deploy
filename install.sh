@@ -53,10 +53,30 @@ note "data directory:  $DATA_DIR"
 note "portal listen:   $LISTEN"
 
 # 1. docker
+# A minimal or freshly booted box can have an empty or stale package index, and
+# apk then answers "no such package" for a package that does exist. Refresh the
+# index once and turn a failure into a sentence a human can act on.
+apk_refresh() {
+  if [ "$PKG" = "apk" ] && [ "${APK_REFRESHED:-0}" = 0 ]; then
+    apk update >/dev/null 2>&1 || true
+    APK_REFRESHED=1
+  fi
+}
+
+apk_install() {
+  apk_refresh
+  apk add --no-cache "$@" >/dev/null
+}
+
 if [ "$DO_DOCKER" = 1 ] && ! command -v docker >/dev/null 2>&1; then
   echo "installing docker"
   if [ "$PKG" = "apk" ]; then
-    apk add --no-cache docker docker-cli-compose >/dev/null
+    if ! apk_install docker; then
+      echo "could not install docker from the configured apk repositories." >&2
+      echo "check that /etc/apk/repositories points at a reachable mirror, then rerun." >&2
+      exit 1
+    fi
+    apk_install docker-cli-compose || true
   else
     apt-get update -qq
     apt-get install -y -qq docker.io >/dev/null
@@ -74,7 +94,7 @@ command -v docker >/dev/null 2>&1 && note "docker: $(docker --version | cut -d, 
 if ! command -v git >/dev/null 2>&1; then
   echo "installing git"
   if [ "$PKG" = "apk" ]; then
-    apk add --no-cache git >/dev/null
+    apk_install git
   else
     apt-get install -y -qq git >/dev/null
   fi
@@ -85,7 +105,7 @@ note "git: $(git --version)"
 if [ "$DO_CADDY" = 1 ] && ! command -v caddy >/dev/null 2>&1; then
   echo "installing caddy"
   if [ "$PKG" = "apk" ]; then
-    apk add --no-cache caddy >/dev/null 2>&1 || note "caddy: not installed (optional)"
+    apk_install caddy 2>/dev/null || note "caddy: not installed (optional)"
   else
     apt-get install -y -qq caddy >/dev/null 2>&1 || note "caddy: not installed (optional)"
   fi
@@ -136,6 +156,16 @@ note "binary: $BIN_DIR/shoal-deploy ($("$BIN_DIR/shoal-deploy" version))"
 
 # 4. service
 if [ "$PKG" = "apk" ]; then
+  if ! command -v rc-update >/dev/null 2>&1; then
+    # a container image or a stripped rootfs can lack openrc entirely; the binary
+    # still works, so say so instead of dying half way through the install
+    note "openrc not found: start it by hand with"
+    note "  $BIN_DIR/shoal-deploy --listen $LISTEN --data-dir $DATA_DIR$TLS_ARG"
+    echo
+    echo "portal: http://$LISTEN/  (user admin)"
+    exit 0
+  fi
+  mkdir -p /etc/init.d /etc/runlevels/default
   # unquoted heredoc: the listen address and data dir must reach the script
   cat > /etc/init.d/shoal-deploy <<EOF
 #!/sbin/openrc-run
@@ -145,21 +175,17 @@ command_args="--listen $LISTEN --data-dir $DATA_DIR$TLS_ARG"
 command_user=root:root
 command_background=yes
 pidfile=/run/shoal-deploy.pid
-depend() { need docker; after docker; }
+# use/after, not need: if docker is unhappy the portal must still come up so the
+# operator can see what is wrong instead of finding a dead port and a log line.
+depend() { use docker; after docker; }
 output_log=/var/log/shoal-deploy.log
 error_log=/var/log/shoal-deploy.log
 EOF
   chmod 0755 /etc/init.d/shoal-deploy
   rc-update add docker default >/dev/null 2>&1 || true
   rc-update add shoal-deploy default >/dev/null
-  # the unit needs docker, and openrc parks the service in "starting" until that
-  # dependency is up, so bring docker up first and wait for its socket
-  docker info >/dev/null 2>&1 || rc-service docker start >/dev/null 2>&1 &
-  i=0
-  while [ "$i" -lt 90 ] && ! docker info >/dev/null 2>&1; do
-    sleep 1
-    i=$((i + 1))
-  done
+  # one start call: openrc pulls the `need docker` dependency itself, and a
+  # second call answers "already starting" while the first is still working
   rc-service shoal-deploy start >/dev/null 2>&1 || true
   PORT="${LISTEN##*:}"
   i=0

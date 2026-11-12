@@ -27,7 +27,7 @@ function renderLogin(msg = '') {
   root.innerHTML = `
   <div class="login-wrap">
     <form class="login" id="login">
-      <div class="mark"><b>SHOAL DEPLOY</b><span>v0.1</span></div>
+      <div class="mark"><b>SHOAL DEPLOY</b><span>${st.version ? 'v' + esc(String(st.version).replace(/^v/, '')) : ''}</span></div>
       <div class="field">
         <label for="u">User</label>
         <input id="u" type="text" value="admin" autocomplete="username" spellcheck="false">
@@ -68,8 +68,7 @@ function rail(active) {
     </a>`).join('') || '<div class="app-link"><span class="dot"></span><span class="sub">no apps yet</span></div>';
   return `
   <aside class="rail">
-    <div class="brand"><b>SHOAL DEPLOY</b><span>v0.1.0</span></div>
-    <div class="rail-actions"><a class="btn" style="display:block;text-align:center" href="#/new">+ New app</a></div>
+    <div class="brand"><b>SHOAL DEPLOY</b><span>v${esc((st.version || '').replace(/^v/, ''))}</span><a class="new" href="#/new">+ new</a></div>
     <nav class="app-list">${items}</nav>
     <div class="rail-foot">
       <div>${esc(st.host)}</div>
@@ -100,7 +99,7 @@ async function renderHome() {
         ${st.apps.map((a) => `
           <a class="deploy" href="#/app/${encodeURIComponent(a.name)}">
             <div><div class="id">${esc(a.name)}</div>
-              <div class="sub"><span>${esc(a.repo || 'no source')}</span><span>${esc(a.url || a.domain || '—')}</span></div></div>
+              <div class="sub"><span>${esc(a.repo || a.image || 'no repository')}</span><span>${esc(a.url || a.domain || 'no route')}</span></div></div>
             <div class="right"><span class="bracket ${a.status}">[${esc((a.status || 'none').toUpperCase())}]</span></div>
           </a>`).join('')}
       </div>
@@ -189,6 +188,8 @@ function renderNew() {
 /* ---------- app detail ---------- */
 async function renderApp(name) {
   clearInterval(timer);
+  // the rail renders from st.apps, so a direct link needs the overview too
+  await refresh();
   const data = await api('/api/apps/' + encodeURIComponent(name));
   detail = data;
   selected = data.app.deploy_id || (data.deploys[0] && data.deploys[0].id) || null;
@@ -200,7 +201,7 @@ async function renderApp(name) {
       <div>
         <h1>${esc(a.name)}</h1>
         <div class="meta">
-          <span>${esc(a.repo || 'no repository')}${a.ref ? '@' + esc(a.ref) : ''}</span>
+          <span>${esc(a.repo || a.image || 'no repository')}${a.ref ? '@' + esc(a.ref) : ''}</span>
           ${a.url ? `<a href="${esc(a.url)}" target="_blank" rel="noreferrer">${esc(a.url)}</a>` : '<span>no route</span>'}
         </div>
       </div>
@@ -332,7 +333,7 @@ function envRow(k, v) {
   return `<tr>
     <td><input class="ek" type="text" value="${esc(k)}" placeholder="KEY" spellcheck="false"></td>
     <td><input class="ev" type="text" value="${esc(v)}" placeholder="value" spellcheck="false"></td>
-    <td><button class="btn small ghost" onclick="this.closest('tr').remove()">x</button></td>
+    <td><button class="btn small ghost del" onclick="this.closest('tr').remove()" aria-label="remove variable" title="remove">×</button></td>
   </tr>`;
 }
 
@@ -365,7 +366,7 @@ function renderDetailParts(forceLog) {
   const cur = selected ? detail.deploys.find((d) => d.id === selected) : null;
   const log = root.querySelector('#log');
   let text;
-  if (cur) { text = cur.log || '(waiting for output)'; root.querySelector('#logtitle').textContent = 'Build log · ' + cur.id; }
+  if (cur) { text = cur.log || '(waiting for output)'; root.querySelector('#logtitle').innerHTML = 'Build log · <span class="lit">' + esc(cur.id) + '</span>'; }
   else { text = detail.logs || '(no container output yet)'; root.querySelector('#logtitle').textContent = 'App logs'; }
   const running = cur && ['queued', 'building', 'starting'].includes(cur.status);
   root.querySelector('#livetag').textContent = running ? '[running]' : '';

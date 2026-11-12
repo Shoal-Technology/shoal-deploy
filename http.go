@@ -192,7 +192,7 @@ func (s *Server) overview(w http.ResponseWriter, r *http.Request, user string) {
 		}
 	})
 	writeJSON(w, http.StatusOK, map[string]any{
-		"user": user, "apps": apps, "host": s.host,
+		"user": user, "apps": apps, "host": s.host, "version": version,
 		"docker": dockerVersion(r.Context()), "caddy": s.dep.caddy != "",
 	})
 }
