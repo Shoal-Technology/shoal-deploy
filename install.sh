@@ -101,6 +101,22 @@ pkg_hint() { # $1 = package to install, $2 = flag that skips it
   fi
 }
 
+# Wait for the portal to answer. Sets PROBE_SECS. curl first because RHEL
+# minimal images ship curl but no wget.
+portal_probe() { # $1 = port
+  PROBE_SECS=0
+  while [ "$PROBE_SECS" -lt 60 ]; do
+    if command -v curl >/dev/null 2>&1; then
+      curl -fs -o /dev/null "http://127.0.0.1:$1/" 2>/dev/null && return 0
+    else
+      wget -q -O /dev/null "http://127.0.0.1:$1/" 2>/dev/null && return 0
+    fi
+    sleep 1
+    PROBE_SECS=$((PROBE_SECS + 1))
+  done
+  return 1
+}
+
 if [ "$DO_DOCKER" = 1 ] && ! command -v docker >/dev/null 2>&1; then
   echo "installing docker"
   if [ "$PKG" = "apk" ]; then
@@ -238,26 +254,21 @@ EOF
   # second call answers "already starting" while the first is still working
   rc-service shoal-deploy start >/dev/null 2>&1 || true
   PORT="${LISTEN##*:}"
-  i=0
-  while [ "$i" -lt 60 ]; do
-    wget -q -O /dev/null "http://127.0.0.1:$PORT/" 2>/dev/null && break
-    sleep 1
-    i=$((i + 1))
-  done
-  if [ "$i" -ge 60 ]; then
+  if ! portal_probe "$PORT"; then
     echo "warning: portal did not answer on 127.0.0.1:$PORT after 60s" >&2
     echo "  status:  rc-service shoal-deploy status" >&2
     echo "  log:     /var/log/shoal-deploy.log" >&2
     echo "  by hand: $BIN_DIR/shoal-deploy --listen $LISTEN --data-dir $DATA_DIR$TLS_ARG" >&2
   else
-    note "portal ready on 127.0.0.1:$PORT (${i}s)"
+    note "portal ready on 127.0.0.1:$PORT (${PROBE_SECS}s)"
   fi
 elif [ "$INIT" = "systemd" ]; then
+  mkdir -p /etc/systemd/system
   cat > /etc/systemd/system/shoal-deploy.service <<EOF
 [Unit]
 Description=Shoal Deploy control plane
 After=docker.service network-online.target
-Requires=docker.service
+Wants=docker.service
 
 [Service]
 ExecStart=$BIN_DIR/shoal-deploy --listen $LISTEN --data-dir $DATA_DIR$TLS_ARG
@@ -269,6 +280,15 @@ WantedBy=multi-user.target
 EOF
   systemctl daemon-reload
   systemctl enable --now shoal-deploy >/dev/null 2>&1
+  PORT="${LISTEN##*:}"
+  if ! portal_probe "$PORT"; then
+    echo "warning: portal did not answer on 127.0.0.1:$PORT after 60s" >&2
+    echo "  status:  systemctl status shoal-deploy" >&2
+    echo "  log:     journalctl -u shoal-deploy -n 50 --no-pager" >&2
+    echo "  by hand: $BIN_DIR/shoal-deploy --listen $LISTEN --data-dir $DATA_DIR$TLS_ARG" >&2
+  else
+    note "portal ready on 127.0.0.1:$PORT (${PROBE_SECS}s)"
+  fi
 else
   # a container image or a stripped rootfs can have neither init system; the
   # binary still works, so say so instead of dying half way through the install
@@ -285,10 +305,27 @@ if [ -f "$DATA_DIR/initial-passphrase" ]; then
   echo "first run — the generated passphrase is in $DATA_DIR/initial-passphrase"
   echo "read it there, then change it under settings after signing in."
 fi
+PORT="${LISTEN##*:}"
 echo
-echo "portal: http://$LISTEN/  (user admin)"
-if [ "$LISTEN" = "127.0.0.1:7700" ]; then
-  echo "loopback only: open a tunnel, e.g. ssh -L 7700:127.0.0.1:7700 $(hostname)"
+if [ "$LISTEN" = "127.0.0.1:$PORT" ]; then
+  echo "portal: http://127.0.0.1:$PORT/  (user admin, loopback only)"
+  echo "not reachable from another machine; reinstall with --public for that,"
+  echo "or open a tunnel: ssh -L $PORT:127.0.0.1:$PORT $(hostname)"
+else
+  # firewalld is enabled by default on rhel/rocky/fedora and silently drops the
+  # packet, so a working portal looks dead from the LAN.
+  if command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1; then
+    firewall-cmd --permanent --add-port="$PORT/tcp" >/dev/null 2>&1 &&
+      firewall-cmd --reload >/dev/null 2>&1 &&
+      note "firewall: opened $PORT/tcp in firewalld"
+  fi
+  IP="$(ip route get 1.1.1.1 2>/dev/null | sed -n 's/.* src \([0-9.]*\).*/\1/p' | head -1)"
+  [ -n "$IP" ] || IP="$(hostname -I 2>/dev/null | awk '{print $1}')"
+  echo "portal: http://${IP:-<this-host-ip>}:$PORT/  (user admin)"
 fi
-echo "put it behind caddy for a domain and TLS: reverse_proxy 127.0.0.1:7700"
+if [ "$DO_CADDY" = 1 ] && command -v caddy >/dev/null 2>&1; then
+  echo "give it a name: caddy reverse_proxy 127.0.0.1:$PORT"
+else
+  echo "domains and TLS need caddy: apk add caddy / dnf install caddy"
+fi
 exit 0
