@@ -240,12 +240,15 @@ EOF
   PORT="${LISTEN##*:}"
   i=0
   while [ "$i" -lt 60 ]; do
-    wget -q -O /dev/null "http://127.0.0.1:$PORT/" && break
+    wget -q -O /dev/null "http://127.0.0.1:$PORT/" 2>/dev/null && break
     sleep 1
     i=$((i + 1))
   done
   if [ "$i" -ge 60 ]; then
-    echo "warning: portal did not answer on 127.0.0.1:$PORT after 60s; see /var/log/shoal-deploy.log" >&2
+    echo "warning: portal did not answer on 127.0.0.1:$PORT after 60s" >&2
+    echo "  status:  rc-service shoal-deploy status" >&2
+    echo "  log:     /var/log/shoal-deploy.log" >&2
+    echo "  by hand: $BIN_DIR/shoal-deploy --listen $LISTEN --data-dir $DATA_DIR$TLS_ARG" >&2
   else
     note "portal ready on 127.0.0.1:$PORT (${i}s)"
   fi
