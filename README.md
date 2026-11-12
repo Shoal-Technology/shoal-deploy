@@ -190,6 +190,7 @@ GET    /healthz
 - **Caddy opsional.** Tanpa Caddy, app tetap hidup dan bisa diakses lewat port yang di-publish Docker; tidak ada TLS otomatis.
 - **Tiga image terakhir** per app disimpan supaya rollback cepat. Selebihnya dihapus supaya disk tidak penuh.
 - **Tanpa domain publik** (misal VM kantor tanpa DNS): install dengan `--tls-internal`. Caddy memakai CA sendiri, tidak menghubungi Let's Encrypt, dan tetap melayani HTTPS untuk domain internal. Tanpa Caddy sama sekali, app tetap hidup di port yang di-publish Docker.
+- **Deploy gagal = baca kalimatnya.** Kalau health check gagal karena port salah, portal membandingkan port yang kamu isi dengan port yang dideklarasikan image dan menyebutkannya. Kalau image tidak mendeklarasikan port apa pun, pesannya hanya berisi error koneksi — cek `EXPOSE` di Dockerfile atau `docker logs` container-nya.
 
 ## Development
 
