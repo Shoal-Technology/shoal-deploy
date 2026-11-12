@@ -186,6 +186,14 @@ else
     aarch64|arm64) arch="arm64" ;;
     *) echo "unsupported architecture: $arch" >&2; exit 1 ;;
   esac
+  # curl is not in a bare alpine image; apk can still fetch both files, so make
+  # sure one of the two exists before the download stands there with no tool.
+  if ! command -v curl >/dev/null 2>&1; then
+    pkg_install curl curl >/dev/null 2>&1 || {
+      echo "curl is required to download the binary; install curl and rerun" >&2
+      exit 1
+    }
+  fi
   tag="${SHOALDEPLOY_VERSION:-$(curl -fsSL "https://api.github.com/repos/$REPO/releases/latest" | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -1)}"
   [ -n "$tag" ] || { echo "no release found; set SHOALDEPLOY_VERSION" >&2; exit 1; }
   url="https://github.com/$REPO/releases/download/$tag/shoal-deploy_${tag#v}_linux_${arch}.tar.gz"
