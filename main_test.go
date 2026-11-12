@@ -388,3 +388,69 @@ func TestSolePort(t *testing.T) {
 		}
 	}
 }
+
+func TestParseListeners(t *testing.T) {
+	// Taken from a real container: docker's DNS on 127.0.0.11 shares the same
+	// address prefix as the app on 127.0.0.1 and must not count as a listener.
+	const tcp = `  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode
+   0: 00000000:0BB8 00000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 1 1 0000000000000000 100 0 0 10 0
+   1: 0B00007F:1234 00000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 2 1 0000000000000000 100 0 0 10 0
+   2: 0100007F:1770 00000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 3 1 0000000000000000 100 0 0 10 0
+   3: 00000000:1F90 00000000:0000 01 00000000:00000000 00:00000000 00000000     0        0 4 1 0000000000000000 100 0 0 10 0
+`
+	got := parseListeners(tcp)
+	if len(got) != 2 {
+		t.Fatalf("want the app's two listeners, got %+v", got)
+	}
+	if got[0].port != 3000 || got[0].loopback {
+		t.Errorf("first listener = %+v, want 3000 on 0.0.0.0", got[0])
+	}
+	if got[1].port != 6000 || !got[1].loopback {
+		t.Errorf("second listener = %+v, want 6000 on 127.0.0.1", got[1])
+	}
+}
+
+func TestHealthWaitStopsWhenTheContainerDies(t *testing.T) {
+	// A closed port is what a dead container looks like from the outside.
+	dead := func() bool { return false }
+	start := time.Now()
+	err := waitHealthy(context.Background(), "http://127.0.0.1:1/healthz", 90*time.Second, func(string, ...any) {}, dead)
+	if err == nil || !strings.Contains(err.Error(), "container exited") {
+		t.Fatalf("want an exited-container error, got %v", err)
+	}
+	if d := time.Since(start); d > 5*time.Second {
+		t.Fatalf("waited %s before giving up on a dead container", d)
+	}
+	if err := waitTCP(context.Background(), 1, 90*time.Second, func(string, ...any) {}, dead); err == nil ||
+		!strings.Contains(err.Error(), "container exited") {
+		t.Fatalf("waitTCP want an exited-container error, got %v", err)
+	}
+	// A live container that just is not listening yet still waits for the timeout.
+	if err := waitTCP(context.Background(), 1, 2*time.Second, func(string, ...any) {}, func() bool { return true }); err == nil {
+		t.Fatal("want a timeout error")
+	}
+}
+
+func TestImagesToPruneKeepsWhatRollbackCanReach(t *testing.T) {
+	st := &State{Deploys: map[string]*Deploy{
+		"a": {ID: "a", App: "api", Status: statusReady, Image: "shoaldeploy/api:old"},
+		"b": {ID: "b", App: "api", Status: statusFailed, Image: "shoaldeploy/api:broken"},
+		"c": {ID: "c", App: "other", Status: statusReady, Image: "shoaldeploy/other:x"},
+	}}
+	// newest first, as docker images returns them
+	images := []string{
+		"shoaldeploy/api:newest",
+		"shoaldeploy/api:broken",
+		"shoaldeploy/api:old",
+		"shoaldeploy/api:ancient",
+	}
+	got := imagesToPrune(images, st, "api", 3)
+	want := []string{"shoaldeploy/api:ancient"}
+	if len(got) != len(want) || got[0] != want[0] {
+		t.Fatalf("prune = %v, want %v", got, want)
+	}
+	// A ready deploy's image survives even when it is the oldest on disk.
+	if got := imagesToPrune(images, st, "api", 1); len(got) != 2 || got[0] == "shoaldeploy/api:old" {
+		t.Fatalf("prune with n=1 = %v, want broken and ancient, never the rollback target", got)
+	}
+}

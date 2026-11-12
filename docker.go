@@ -78,6 +78,13 @@ func containerPort(ctx context.Context, name string, port int) (int, error) {
 	return n, nil
 }
 
+// containerLogs keeps both streams: applications report their failures on
+// stderr, and docker writes the container's stderr to its own stderr — the
+// stdout-only path in dockerRun threw exactly those lines away.
 func containerLogs(ctx context.Context, name string, tail int) (string, error) {
-	return dockerRun(ctx, "logs", "--tail", fmt.Sprint(tail), name)
+	out, err := exec.CommandContext(ctx, "docker", "logs", "--tail", fmt.Sprint(tail), name).CombinedOutput()
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(out)), nil
 }

@@ -197,7 +197,7 @@ GET    /healthz
 - **Docker socket setara root.** Portal yang bisa membangun container bisa menjalankan apa pun sebagai root di host. Jalankan portal hanya di loopback, atau di belakang Caddy dengan TLS, dan jangan buka `7700` ke internet terbuka.
 - **Satu mesin.** Tidak ada replikasi, tidak ada failover. Backup = salin `state.json`, volume Docker, dan image terakhir.
 - **Caddy opsional.** Tanpa Caddy, app tetap hidup dan bisa diakses lewat port yang di-publish Docker; tidak ada TLS otomatis.
-- **Tiga image terakhir** per app disimpan supaya rollback cepat. Selebihnya dihapus supaya disk tidak penuh.
+- **Rollback tidak pernah kehilangan image-nya.** Setiap versi yang berhasil disimpan selama tombol "Pakai versi ini"-nya masih ada. Yang dihapus hanya image dari deploy yang gagal, dan hanya setelah tiga image terbaru tersimpan, supaya disk tidak penuh.
 - **Tanpa domain publik** (misal VM kantor tanpa DNS): install dengan `--tls-internal`. Caddy memakai CA sendiri, tidak menghubungi Let's Encrypt, dan tetap melayani HTTPS untuk domain internal. Tanpa Caddy sama sekali, app tetap hidup di port yang di-publish Docker.
 - **Port container mengikuti image.** Deploy pertama: kalau `EXPOSE` di Dockerfile menyebut tepat satu port tcp, portal memakai port itu dan menulisnya balik ke pengaturan, jadi isian 8080 vs `EXPOSE 8000` tidak lagi menggantung 90 detik lalu gagal. App yang sudah pernah jalan tetap memakai port yang tersimpan. Image dengan beberapa port tidak ditebak — pesan health check akan menyebut daftar port yang dideklarasikan.
 

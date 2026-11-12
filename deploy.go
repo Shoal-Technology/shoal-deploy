@@ -166,6 +166,9 @@ func (d *Deployer) run(id string, app App) {
 	for k, v := range app.Env {
 		env[k] = v
 	}
+	// Images that read $PORT follow the port we publish, so the "declares 8000,
+	// listens on 3000" class fixes itself. A value the operator set wins.
+	_, userPort := env["PORT"]
 	if app.WithDB {
 		if err := d.ensureDB(ctx, app, logf); err != nil {
 			fail(err)
@@ -176,22 +179,56 @@ func (d *Deployer) run(id string, app App) {
 
 	ctr := d.ctrName(app.Name, id)
 	d.store.setStatus(id, statusStarting, "")
-	args := []string{"run", "-d", "--name", ctr, "--network", d.netName(app.Name),
-		"--label", "shoal.deploy/app=" + app.Name, "--restart", "unless-stopped",
-		"-p", fmt.Sprintf("127.0.0.1::%d", cport)}
-	keys := make([]string, 0, len(env))
-	for k := range env {
-		keys = append(keys, k)
+	// Run, then ask the container where it actually listens: an image is free to
+	// ignore both EXPOSE and $PORT with a hard-coded number, and restarting once
+	// is cheaper than a doomed 90 second health wait. A redeploy keeps the port
+	// that already worked.
+	attempt := 0
+	start := func() error {
+		attempt++
+		e := map[string]string{}
+		for k, v := range env {
+			e[k] = v
+		}
+		if !userPort {
+			e["PORT"] = strconv.Itoa(cport)
+		}
+		args := []string{"run", "-d", "--name", ctr, "--network", d.netName(app.Name),
+			"--label", "shoal.deploy/app=" + app.Name, "--restart", "unless-stopped",
+			"-p", fmt.Sprintf("127.0.0.1::%d", cport)}
+		keys := make([]string, 0, len(e))
+		for k := range e {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			args = append(args, "-e", k+"="+e[k])
+		}
+		args = append(args, image)
+		logf("[*] starting container %s", ctr)
+		_, err := dockerRun(ctx, args...)
+		return err
 	}
-	sort.Strings(keys)
-	for _, k := range keys {
-		args = append(args, "-e", k+"="+env[k])
-	}
-	args = append(args, image)
-	logf("[*] starting container %s", ctr)
-	if _, err := dockerRun(ctx, args...); err != nil {
-		fail(err)
-		return
+	for {
+		if err := start(); err != nil {
+			fail(err)
+			return
+		}
+		p, found, problem := 0, false, ""
+		if app.Current == "" && attempt == 1 {
+			p, found, problem = actualPort(ctx, ctr, cport)
+		}
+		if problem != "" {
+			d.rm(ctr)
+			fail(errors.New("aplikasi tidak bisa dijangkau" + problem))
+			return
+		}
+		if !found {
+			break
+		}
+		logf("[*] the app listens on %d, not %d: publishing that instead", p, cport)
+		d.rm(ctr)
+		cport = p
 	}
 
 	port, err := containerPortRetry(ctx, ctr, cport)
@@ -201,20 +238,43 @@ func (d *Deployer) run(id string, app App) {
 		return
 	}
 	checkErr := error(nil)
+	// A container that already died will never answer, so stop waiting as soon
+	// as it goes down: 90 seconds of silence tells the operator nothing.
+	alive := func() bool { return !containerFailed(ctx, ctr) }
 	if strings.EqualFold(app.HealthPath, "tcp") {
 		// Database and other non-HTTP services: a TCP accept is the health signal.
-		checkErr = waitTCP(ctx, port, 90*time.Second, logf)
+		checkErr = waitTCP(ctx, port, 90*time.Second, logf, alive)
 	} else {
-		checkErr = waitHealthy(ctx, fmt.Sprintf("http://127.0.0.1:%d%s", port, pathOr(app.HealthPath, "/")), 90*time.Second, logf)
+		checkErr = waitHealthy(ctx, fmt.Sprintf("http://127.0.0.1:%d%s", port, pathOr(app.HealthPath, "/")), 90*time.Second, logf, alive)
 	}
 	if err := checkErr; err != nil {
+		// Why it never answered is in the app's own output, so show it before
+		// the container goes away. Without this the operator can only guess.
+		running := !containerFailed(ctx, ctr)
+		if st, serr := dockerRun(ctx, "inspect", "--format", "{{.State.Status}} (exit {{.State.ExitCode}})", ctr); serr == nil {
+			logf("[!] container state: %s", st)
+		}
+		if logs, lerr := containerLogs(ctx, ctr, 20); lerr == nil && strings.TrimSpace(logs) != "" {
+			for _, line := range strings.Split(strings.TrimSpace(logs), "\n") {
+				logf("[!] %s", line)
+			}
+		}
 		d.rm(ctr)
 		// Most first-deploy failures are a port mismatch, not a broken app.
 		declared := ""
 		if p, perr := declaredPorts(ctx, image); perr == nil {
 			declared = p
 		}
-		fail(fmt.Errorf("%w%s", err, portHint(declared, cport)))
+		hint := ""
+		if running { // a crashed app names no port problem, it just died
+			hint = portHint(declared, cport)
+			if hint == "" {
+				// Still up but silent: the log above usually names the port it
+				// actually bound, which is the one number the operator can fix.
+				hint = fmt.Sprintf(" — aplikasi berjalan tapi tidak ada yang menjawab di port %d. Kalau log di atas menyebut port lain, isi angka itu di \"Port container\".", cport)
+			}
+		}
+		fail(fmt.Errorf("%w%s", err, hint))
 		return
 	}
 
@@ -304,7 +364,9 @@ func (d *Deployer) rm(name string) {
 	dockerRun(ctx, "rm", "-f", name)
 }
 
-// prune keeps the newest n images of one app.
+// prune keeps the newest n images of one app, plus every image a ready deploy
+// still points at: the portal offers a rollback button for each of those, and
+// removing the image turns that button into a failure.
 func (d *Deployer) prune(app string, n int) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -312,18 +374,36 @@ func (d *Deployer) prune(app string, n int) {
 	if err != nil || out == "" {
 		return
 	}
-	lines := strings.Fields(out)
-	sort.Sort(sort.Reverse(sort.StringSlice(lines)))
-	for _, img := range lines {
-		if len(lines) <= n {
-			break
+	var st State
+	d.store.View(func(s *State) { st = *s })
+	for _, img := range imagesToPrune(strings.Fields(out), &st, app, n) {
+		dockerRun(ctx, "rmi", img)
+	}
+}
+
+// imagesToPrune decides which images to remove. images is newest first, the
+// order docker returns. An image referenced by a ready deploy of this app is
+// never removed, and neither are the newest n.
+func imagesToPrune(images []string, st *State, app string, n int) []string {
+	keep := map[string]bool{}
+	for _, dep := range st.Deploys {
+		if dep.App == app && dep.Status == statusReady && dep.Image != "" {
+			keep[dep.Image] = true
 		}
-		if strings.Contains(img, "<none>") || img == "" {
+	}
+	var drop []string
+	kept := 0
+	for _, img := range images {
+		if img == "" || strings.Contains(img, "<none>") {
 			continue
 		}
-		dockerRun(ctx, "rmi", img)
-		lines = lines[1:]
+		if keep[img] || kept < n {
+			kept++
+			continue
+		}
+		drop = append(drop, img)
 	}
+	return drop
 }
 
 func (d *Deployer) ensureDB(ctx context.Context, app App, logf func(string, ...any)) error {
@@ -561,7 +641,123 @@ func containerPortRetry(ctx context.Context, name string, port int) (int, error)
 	}
 }
 
-func waitTCP(ctx context.Context, port int, timeout time.Duration, logf func(string, ...any)) error {
+// listener is one socket in LISTEN state inside the container.
+type listener struct {
+	port     int
+	loopback bool // bound to 127.x or ::1, so a published port cannot reach it
+}
+
+// parseListeners reads one /proc/net/tcp{,6} dump. Keeping it pure makes the
+// hex parsing testable without docker.
+func parseListeners(txt string) []listener {
+	var out []listener
+	for _, line := range strings.Split(txt, "\n")[1:] {
+		// sl local_address rem_address st ...  st 0A is LISTEN.
+		fields := strings.Fields(line)
+		if len(fields) < 4 || fields[3] != "0A" {
+			continue
+		}
+		addr, hexPort, ok := strings.Cut(fields[1], ":")
+		if !ok {
+			continue
+		}
+		p, err := strconv.ParseInt(hexPort, 16, 32)
+		if err != nil || p == 0 {
+			continue
+		}
+		// The address is little endian, so the first octet is the last byte
+		// pair: 127.0.0.1 is 0100007F, 127.0.0.11 is 0B00007F, ::1 ends the
+		// same way. Any 127.x or ::1 listener is unreadable from the host.
+		loop := strings.HasSuffix(addr, "7F")
+		// 127.0.0.11 is docker's embedded DNS. It sits in every container on
+		// a port of its own choosing, and it is never the app.
+		if addr == "0B00007F" {
+			continue
+		}
+		out = append(out, listener{port: int(p), loopback: loop})
+	}
+	return out
+}
+
+// listeners reads /proc/net/tcp{,6} inside the container, so no netstat or
+// shell has to exist in the image.
+func listeners(ctx context.Context, name string) []listener {
+	var out []listener
+	seen := map[int]bool{}
+	for _, f := range []string{"/proc/net/tcp", "/proc/net/tcp6"} {
+		txt, err := dockerRun(ctx, "exec", name, "cat", f)
+		if err != nil {
+			continue
+		}
+		for _, l := range parseListeners(txt) {
+			if seen[l.port] {
+				continue
+			}
+			seen[l.port] = true
+			out = append(out, l)
+		}
+	}
+	return out
+}
+
+// actualPort waits for a first-deploy container to start listening and reports
+// the single port it settled on when that differs from the configured one.
+// Failing here saves the 90 second health wait and names the one number to fix.
+// problem is set when the app cannot be reached at all — bound to loopback only.
+func actualPort(ctx context.Context, name string, want int) (port int, found bool, problem string) {
+	deadline := time.Now().Add(15 * time.Second)
+	for {
+		all := listeners(ctx, name)
+		var open []int
+		for _, l := range all {
+			if !l.loopback {
+				open = append(open, l.port)
+			}
+		}
+		if len(open) == 1 {
+			if open[0] == want {
+				return 0, false, ""
+			}
+			return open[0], true, ""
+		}
+		if len(open) > 1 || containerFailed(ctx, name) {
+			return 0, false, "" // several ports say nothing; the health check decides
+		}
+		if time.Now().After(deadline) {
+			if len(all) > 0 {
+				return 0, false, fmt.Sprintf(" — aplikasi hanya mendengarkan di dalam container (%s), jadi port yang dipublikasikan tidak bisa mencapainya. Jalankan aplikasi di 0.0.0.0, bukan 127.0.0.1.", fmtPorts(all))
+			}
+			return 0, false, ""
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+}
+
+func fmtPorts(ls []listener) string {
+	parts := make([]string, 0, len(ls))
+	for _, l := range ls {
+		parts = append(parts, fmt.Sprintf("127.0.0.1:%d", l.port))
+	}
+	return strings.Join(parts, ", ")
+}
+
+// containerFailed reports whether the container has given up. The Running flag
+// alone is not enough: --restart keeps it true on a box that crashes forever,
+// and a crash loop shows as "restarting". Anything else is still worth waiting
+// on, including "created" before the first start.
+func containerFailed(ctx context.Context, name string) bool {
+	out, err := dockerRun(ctx, "inspect", "--format", "{{.State.Status}}", name)
+	if err != nil {
+		return true
+	}
+	switch out {
+	case "exited", "dead", "restarting":
+		return true
+	}
+	return false
+}
+
+func waitTCP(ctx context.Context, port int, timeout time.Duration, logf func(string, ...any), alive func() bool) error {
 	deadline := time.Now().Add(timeout)
 	last := "no listener"
 	for {
@@ -573,6 +769,9 @@ func waitTCP(ctx context.Context, port int, timeout time.Duration, logf func(str
 			return nil
 		}
 		last = err.Error()
+		if alive != nil && !alive() {
+			return fmt.Errorf("container exited before accepting on port %d: %s", port, last)
+		}
 		if time.Now().After(deadline) {
 			return fmt.Errorf("tcp health check on port %d failed after %s: %s", port, timeout, last)
 		}
@@ -580,7 +779,7 @@ func waitTCP(ctx context.Context, port int, timeout time.Duration, logf func(str
 	}
 }
 
-func waitHealthy(ctx context.Context, url string, timeout time.Duration, logf func(string, ...any)) error {
+func waitHealthy(ctx context.Context, url string, timeout time.Duration, logf func(string, ...any), alive func() bool) error {
 	deadline := time.Now().Add(timeout)
 	client := &http.Client{Timeout: 3 * time.Second}
 	last := "no response"
@@ -596,6 +795,9 @@ func waitHealthy(ctx context.Context, url string, timeout time.Duration, logf fu
 			last = fmt.Sprintf("status %d", resp.StatusCode)
 		} else {
 			last = err.Error()
+			if alive != nil && !alive() {
+				return fmt.Errorf("container exited before answering %s: %s", url, last)
+			}
 		}
 		if time.Now().After(deadline) {
 			return fmt.Errorf("health check %s failed after %s: %s", url, timeout, last)
