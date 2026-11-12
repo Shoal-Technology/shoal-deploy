@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -142,6 +143,20 @@ func (d *Deployer) run(id string, app App) {
 		}
 	}
 
+	// An image rarely listens where the form guessed. On a first deploy trust
+	// EXPOSE when it names exactly one tcp port: waiting the full health timeout
+	// to say so wastes a run, and the operator would retype the same number. An
+	// app that already deployed keeps its port, since that one demonstrably works.
+	cport := app.Port
+	if app.Current == "" {
+		if declared, err := declaredPorts(ctx, image); err == nil {
+			if p, ok := solePort(declared); ok && p != cport {
+				logf("[*] image declares %d/tcp, publishing that instead of %d", p, cport)
+				cport = p
+			}
+		}
+	}
+
 	if err := dockerRun2(ctx, "network", "create", d.netName(app.Name)); err != nil {
 		fail(err)
 		return
@@ -163,7 +178,7 @@ func (d *Deployer) run(id string, app App) {
 	d.store.setStatus(id, statusStarting, "")
 	args := []string{"run", "-d", "--name", ctr, "--network", d.netName(app.Name),
 		"--label", "shoal.deploy/app=" + app.Name, "--restart", "unless-stopped",
-		"-p", fmt.Sprintf("127.0.0.1::%d", app.Port)}
+		"-p", fmt.Sprintf("127.0.0.1::%d", cport)}
 	keys := make([]string, 0, len(env))
 	for k := range env {
 		keys = append(keys, k)
@@ -179,7 +194,7 @@ func (d *Deployer) run(id string, app App) {
 		return
 	}
 
-	port, err := containerPortRetry(ctx, ctr, app.Port)
+	port, err := containerPortRetry(ctx, ctr, cport)
 	if err != nil {
 		d.rm(ctr)
 		fail(err)
@@ -199,7 +214,7 @@ func (d *Deployer) run(id string, app App) {
 		if p, perr := declaredPorts(ctx, image); perr == nil {
 			declared = p
 		}
-		fail(fmt.Errorf("%w%s", err, portHint(declared, app.Port)))
+		fail(fmt.Errorf("%w%s", err, portHint(declared, cport)))
 		return
 	}
 
@@ -211,6 +226,7 @@ func (d *Deployer) run(id string, app App) {
 	old := app.Current
 	err = d.store.Update(func(st *State) {
 		st.Apps[app.Name].Current = id
+		st.Apps[app.Name].Port = cport // the form guessed 8080; keep what actually serves
 		dp := st.Deploys[id]
 		dp.Status, dp.Port, dp.URL, dp.Commit = statusReady, port, public, commit
 		dp.Finished = time.Now().UTC()
@@ -246,6 +262,29 @@ func (d *Deployer) databaseURL(app App) string {
 func declaredPorts(ctx context.Context, image string) (string, error) {
 	return dockerRun(ctx, "image", "inspect", "--format",
 		"{{range $p, $_ := .Config.ExposedPorts}}{{$p}} {{end}}", image)
+}
+
+// solePort returns the one tcp port an image declares, if it declares exactly
+// one. Images listing several (a metrics port, say) stay on the form's port,
+// since nothing here can tell which one serves traffic.
+func solePort(declared string) (int, bool) {
+	var found int
+	n := 0
+	for _, f := range strings.Fields(declared) {
+		port, ok := strings.CutSuffix(f, "/tcp")
+		if !ok {
+			continue
+		}
+		p, err := strconv.Atoi(port)
+		if err != nil {
+			continue
+		}
+		found, n = p, n+1
+	}
+	if n != 1 {
+		return 0, false
+	}
+	return found, true
 }
 
 // portHint explains a failed health check when the image declares a different

@@ -370,3 +370,21 @@ func TestStreamCmdKeepsTheReason(t *testing.T) {
 		t.Fatalf("hint missing, got %q", h)
 	}
 }
+
+func TestSolePort(t *testing.T) {
+	cases := []struct {
+		declared string
+		want     int
+		ok       bool
+	}{
+		{"8000/tcp ", 8000, true},
+		{"8080/tcp 9000/tcp ", 0, false}, // two ports: nothing safe to pick
+		{"", 0, false},
+		{"53/udp ", 0, false}, // tcp only, a udp port says nothing about http
+	}
+	for _, c := range cases {
+		if got, ok := solePort(c.declared); got != c.want || ok != c.ok {
+			t.Errorf("solePort(%q) = %d,%v want %d,%v", c.declared, got, ok, c.want, c.ok)
+		}
+	}
+}
