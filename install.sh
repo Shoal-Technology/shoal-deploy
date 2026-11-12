@@ -150,8 +150,29 @@ output_log=/var/log/shoal-deploy.log
 error_log=/var/log/shoal-deploy.log
 EOF
   chmod 0755 /etc/init.d/shoal-deploy
+  rc-update add docker default >/dev/null 2>&1 || true
   rc-update add shoal-deploy default >/dev/null
-  rc-service shoal-deploy restart >/dev/null 2>&1 || rc-service shoal-deploy start >/dev/null
+  # the unit needs docker, and openrc parks the service in "starting" until that
+  # dependency is up, so bring docker up first and wait for its socket
+  docker info >/dev/null 2>&1 || rc-service docker start >/dev/null 2>&1 &
+  i=0
+  while [ "$i" -lt 90 ] && ! docker info >/dev/null 2>&1; do
+    sleep 1
+    i=$((i + 1))
+  done
+  rc-service shoal-deploy start >/dev/null 2>&1 || true
+  PORT="${LISTEN##*:}"
+  i=0
+  while [ "$i" -lt 60 ]; do
+    wget -q -O /dev/null "http://127.0.0.1:$PORT/" && break
+    sleep 1
+    i=$((i + 1))
+  done
+  if [ "$i" -ge 60 ]; then
+    echo "warning: portal did not answer on 127.0.0.1:$PORT after 60s; see /var/log/shoal-deploy.log" >&2
+  else
+    note "portal ready on 127.0.0.1:$PORT (${i}s)"
+  fi
 else
   cat > /etc/systemd/system/shoal-deploy.service <<EOF
 [Unit]
