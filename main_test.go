@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -260,7 +262,7 @@ func TestPortHint(t *testing.T) {
 		{"  ", 80, false},
 	}
 	for _, c := range cases {
-		got := portHint(c.declared, c.port)
+		got := portHint(c.declared, c.port, 1079)
 		if (got != "") != c.want {
 			t.Fatalf("portHint(%q, %d) = %q, want hint=%v", c.declared, c.port, got, c.want)
 		}
@@ -369,6 +371,61 @@ func TestStreamCmdKeepsTheReason(t *testing.T) {
 	if h := cloneHint(msg); !strings.Contains(h, "private or the URL is wrong") {
 		t.Fatalf("hint missing, got %q", h)
 	}
+}
+
+func TestFreePortSkipsWhatIsTaken(t *testing.T) {
+	held, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer held.Close()
+	taken := held.Addr().(*net.TCPAddr).Port
+	for i := 0; i < 20; i++ {
+		got, err := freePort()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got == taken {
+			t.Fatalf("freePort returned %d, which is already listening", got)
+		}
+	}
+}
+
+// The collision the operator hit is not freePort returning a busy number, it is
+// docker publishing on top of a listener it did not create. This runs the same
+// function a deploy uses and checks the published port against one we hold.
+func TestPublishOnFreePortDoesNotTakeAHeldPort(t *testing.T) {
+	if os.Getenv("SHOAL_DOCKER_TEST") == "" {
+		t.Skip("set SHOAL_DOCKER_TEST=1 to run against the local docker daemon")
+	}
+	held, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer held.Close()
+	taken := held.Addr().(*net.TCPAddr).Port
+
+	ctr := fmt.Sprintf("shoaldeploy-portcheck-%d", time.Now().UnixNano())
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	defer exec.Command("docker", "rm", "-f", ctr).Run()
+	err = publishOnFreePort(ctx, ctr, "bridge", "portcheck", 80, map[string]string{}, "nginx:alpine",
+		func(string, ...any) {})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := containerPort(ctx, ctr, 80)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got == taken {
+		t.Fatalf("published on %d, which another process is already listening on", taken)
+	}
+	conn, err := net.Dial("tcp", held.Addr().String())
+	if err != nil {
+		t.Fatalf("the original listener no longer accepts connections: %v", err)
+	}
+	conn.Close()
 }
 
 func TestSolePort(t *testing.T) {

@@ -193,21 +193,10 @@ func (d *Deployer) run(id string, app App) {
 		if !userPort {
 			e["PORT"] = strconv.Itoa(cport)
 		}
-		args := []string{"run", "-d", "--name", ctr, "--network", d.netName(app.Name),
-			"--label", "shoal.deploy/app=" + app.Name, "--restart", "unless-stopped",
-			"-p", fmt.Sprintf("127.0.0.1::%d", cport)}
-		keys := make([]string, 0, len(e))
-		for k := range e {
-			keys = append(keys, k)
+		if err := publishOnFreePort(ctx, ctr, d.netName(app.Name), app.Name, cport, e, image, logf); err != nil {
+			return err
 		}
-		sort.Strings(keys)
-		for _, k := range keys {
-			args = append(args, "-e", k+"="+e[k])
-		}
-		args = append(args, image)
-		logf("[*] starting container %s", ctr)
-		_, err := dockerRun(ctx, args...)
-		return err
+		return nil
 	}
 	for {
 		if err := start(); err != nil {
@@ -267,7 +256,7 @@ func (d *Deployer) run(id string, app App) {
 		}
 		hint := ""
 		if running { // a crashed app names no port problem, it just died
-			hint = portHint(declared, cport)
+			hint = portHint(declared, cport, port)
 			if hint == "" {
 				// Still up but silent: the log above usually names the port it
 				// actually bound, which is the one number the operator can fix.
@@ -347,14 +336,56 @@ func solePort(declared string) (int, bool) {
 	return found, true
 }
 
+// publishOnFreePort starts the container with its host port chosen by the
+// kernel, not by docker. Docker's own pick (an empty host port) only avoids
+// ports it published itself, so it lands on a port another process already
+// holds and the health check reads a reset.
+func publishOnFreePort(ctx context.Context, ctr, network, app string, cport int, env map[string]string, image string, logf func(string, ...any)) error {
+	host, err := freePort()
+	if err != nil {
+		return err
+	}
+	args := []string{"run", "-d", "--name", ctr, "--network", network,
+		"--label", "shoal.deploy/app=" + app, "--restart", "unless-stopped",
+		"-p", fmt.Sprintf("127.0.0.1:%d:%d", host, cport)}
+	keys := make([]string, 0, len(env))
+	for k := range env {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		args = append(args, "-e", k+"="+env[k])
+	}
+	args = append(args, image)
+	logf("[*] starting container %s", ctr)
+	_, err = dockerRun(ctx, args...)
+	return err
+}
+
+// freePort returns a loopback port nobody is listening on. Docker's own pick
+// (an empty host port) ignores listeners it did not publish, so two apps end
+// up on one port and the health check reads a reset.
+// shortcut: the port is released before docker binds it, so another process can
+// take it in between. Hold the listener until docker binds if that shows up.
+func freePort() (int, error) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return 0, fmt.Errorf("no free loopback port: %w", err)
+	}
+	defer l.Close()
+	return l.Addr().(*net.TCPAddr).Port, nil
+}
+
 // portHint explains a failed health check when the image declares a different
-// port than the one configured. Empty when the ports agree or are unknown.
-func portHint(declared string, port int) string {
+// port than the one configured. checked is the host port the probe hit, which
+// is not the container port: docker publishes it on a random loopback port.
+// Empty when the ports agree or are unknown.
+func portHint(declared string, port int, checked int) string {
 	declared = strings.TrimSpace(declared)
 	if declared == "" || strings.Contains(declared, fmt.Sprintf("%d/tcp", port)) {
 		return ""
 	}
-	return fmt.Sprintf(" — image ini mendeklarasikan port %s, bukan %d. Cek isian \"port container\" di pengaturan teknis.", declared, port)
+	return fmt.Sprintf(" — image ini mendeklarasikan port %s, bukan %d. Health check mengetuk port host %d. Cek isian \"port container\" di pengaturan teknis.", declared, port, checked)
 }
 
 // rm removes a container but keeps its image for rollback.
