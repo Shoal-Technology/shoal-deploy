@@ -224,7 +224,9 @@ else
     note "checksum: ok"
   fi
   tar -xzf "$tmp/bundle.tar.gz" -C "$tmp"
-  install -m 0755 "$tmp/shoal-deploy" "$BIN_DIR/shoal-deploy"
+  bin="$(find "$tmp" -type f -name shoal-deploy -print -quit)"
+  [ -n "$bin" ] || { echo "archive has no shoal-deploy binary" >&2; exit 1; }
+  install -m 0755 "$bin" "$BIN_DIR/shoal-deploy"
   rm -rf "$tmp"
 fi
 note "binary: $BIN_DIR/shoal-deploy ($("$BIN_DIR/shoal-deploy" version))"
