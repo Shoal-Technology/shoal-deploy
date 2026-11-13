@@ -101,6 +101,16 @@ pkg_hint() { # $1 = package to install, $2 = flag that skips it
   fi
 }
 
+# The passphrase file is written once and never removed, so its existence says
+# nothing about this run. It is a first run only while the state has not been
+# saved after it; an update keeps an older passphrase beside a newer state.
+first_run() { # $1 = data dir
+  [ -f "$1/initial-passphrase" ] || return 1
+  [ -f "$1/state.json" ] || return 0
+  [ "$1/state.json" -nt "$1/initial-passphrase" ] && return 1
+  return 0
+}
+
 # Wait for the portal to answer. Sets PROBE_SECS. curl first because RHEL
 # minimal images ship curl but no wget.
 portal_probe() { # $1 = port
@@ -302,7 +312,7 @@ else
 fi
 
 sleep 1
-if [ -f "$DATA_DIR/initial-passphrase" ]; then
+if first_run "$DATA_DIR"; then
   echo
   echo "first run — the generated passphrase is in $DATA_DIR/initial-passphrase"
   echo "read it there, then change it under settings after signing in."
