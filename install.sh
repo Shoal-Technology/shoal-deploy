@@ -19,7 +19,7 @@ TLS_INTERNAL=0
 
 while [ $# -gt 0 ]; do
   case "$1" in
-    --public) LISTEN="0.0.0.0:7700" ;;
+    --public) LISTEN="0.0.0.0:7700"; LISTEN_SET=1 ;;
     --no-docker) DO_DOCKER=0 ;;
     --no-caddy) DO_CADDY=0 ;;
     --tls-internal) TLS_INTERNAL=1 ;;
