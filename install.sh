@@ -23,7 +23,7 @@ while [ $# -gt 0 ]; do
     --no-docker) DO_DOCKER=0 ;;
     --no-caddy) DO_CADDY=0 ;;
     --tls-internal) TLS_INTERNAL=1 ;;
-    --listen) shift; LISTEN="$1" ;;
+    --listen) shift; LISTEN="$1"; LISTEN_SET=1 ;;
     --data-dir) shift; DATA_DIR="$1" ;;
     -h|--help) sed -n '2,11p' "$0"; exit 0 ;;
     *) echo "unknown flag: $1" >&2; exit 1 ;;
@@ -32,6 +32,13 @@ while [ $# -gt 0 ]; do
 done
 
 [ "$(id -u)" = 0 ] || { echo "run as root" >&2; exit 1; }
+
+# A reinstall with no --listen keeps the address the running unit already has.
+# Otherwise an update silently puts a --public portal back on loopback.
+if [ "${LISTEN_SET:-0}" != 1 ]; then
+  PREV=$(systemctl show shoal-deploy -p ExecStart --value 2>/dev/null | sed -n 's/.*--listen \([^ ]*\).*/\1/p')
+  [ -n "$PREV" ] && LISTEN="$PREV"
+fi
 
 TLS_ARG=""
 if [ "$TLS_INTERNAL" = 1 ]; then TLS_ARG=" --tls-internal"; fi
