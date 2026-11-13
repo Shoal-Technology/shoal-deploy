@@ -143,17 +143,14 @@ func (d *Deployer) run(id string, app App) {
 		}
 	}
 
-	// An image rarely listens where the form guessed. On a first deploy trust
-	// EXPOSE when it names exactly one tcp port: waiting the full health timeout
-	// to say so wastes a run, and the operator would retype the same number. An
-	// app that already deployed keeps its port, since that one demonstrably works.
+	// An image rarely listens where the form guessed. The form defaults to 80, so
+	// that number was never typed: trust EXPOSE when it names exactly one tcp
+	// port. Anything else was typed on purpose and wins, even on a first deploy.
 	cport := app.Port
-	if app.Current == "" {
-		if declared, err := declaredPorts(ctx, image); err == nil {
-			if p, ok := solePort(declared); ok && p != cport {
-				logf("[*] image declares %d/tcp, publishing that instead of %d", p, cport)
-				cport = p
-			}
+	if declared, err := declaredPorts(ctx, image); err == nil {
+		if p, use := containerPortChoice(app.Port, declared); use {
+			logf("[*] image declares %d/tcp, publishing that instead of %d", p, cport)
+			cport = p
 		}
 	}
 
@@ -311,6 +308,20 @@ func (d *Deployer) databaseURL(app App) string {
 func declaredPorts(ctx context.Context, image string) (string, error) {
 	return dockerRun(ctx, "image", "inspect", "--format",
 		"{{range $p, $_ := .Config.ExposedPorts}}{{$p}} {{end}}", image)
+}
+
+// containerPortChoice decides which container port to publish. A typed port
+// wins. Only the form's untouched default of 80, or an empty port, yields to
+// the single tcp port the image declares.
+func containerPortChoice(configured int, declared string) (int, bool) {
+	if configured != 0 && configured != 80 {
+		return 0, false
+	}
+	p, ok := solePort(declared)
+	if !ok || p == configured {
+		return 0, false
+	}
+	return p, true
 }
 
 // solePort returns the one tcp port an image declares, if it declares exactly

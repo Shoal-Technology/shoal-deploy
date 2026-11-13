@@ -428,6 +428,27 @@ func TestPublishOnFreePortDoesNotTakeAHeldPort(t *testing.T) {
 	conn.Close()
 }
 
+func TestContainerPortChoice(t *testing.T) {
+	cases := []struct {
+		configured int
+		declared   string
+		want       int
+		use        bool
+	}{
+		{8234, "8000/tcp ", 0, false}, // typed on purpose, never overridden
+		{80, "8000/tcp ", 8000, true}, // the form's untouched default
+		{0, "8000/tcp ", 8000, true},
+		{80, "8080/tcp 9000/tcp ", 0, false}, // two ports: nothing safe to pick
+		{8000, "8000/tcp ", 0, false},        // already the declared port
+	}
+	for _, c := range cases {
+		got, use := containerPortChoice(c.configured, c.declared)
+		if got != c.want || use != c.use {
+			t.Errorf("containerPortChoice(%d, %q) = %d,%v want %d,%v", c.configured, c.declared, got, use, c.want, c.use)
+		}
+	}
+}
+
 func TestSolePort(t *testing.T) {
 	cases := []struct {
 		declared string
