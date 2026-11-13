@@ -26,6 +26,10 @@ type Deployer struct {
 	// asking Let's Encrypt. A box without a public dns name needs this.
 	tlsInternal bool
 
+	// public comes from --public. The portal then listens on every interface,
+	// and so do the apps it deploys; the default keeps both on loopback.
+	public bool
+
 	mu      sync.Mutex
 	running map[string]bool
 }
@@ -190,7 +194,7 @@ func (d *Deployer) run(id string, app App) {
 		if !userPort {
 			e["PORT"] = strconv.Itoa(cport)
 		}
-		if err := publishOnFreePort(ctx, ctr, d.netName(app.Name), app.Name, cport, e, image, logf); err != nil {
+		if err := publishOnFreePort(ctx, ctr, d.netName(app.Name), app.Name, cport, e, image, logf, d.public); err != nil {
 			return err
 		}
 		return nil
@@ -351,14 +355,19 @@ func solePort(declared string) (int, bool) {
 // kernel, not by docker. Docker's own pick (an empty host port) only avoids
 // ports it published itself, so it lands on a port another process already
 // holds and the health check reads a reset.
-func publishOnFreePort(ctx context.Context, ctr, network, app string, cport int, env map[string]string, image string, logf func(string, ...any)) error {
+func publishOnFreePort(ctx context.Context, ctr, network, app string, cport int, env map[string]string, image string, logf func(string, ...any), public bool) error {
 	host, err := freePort()
 	if err != nil {
 		return err
 	}
+	// A public portal is reachable from other machines, so its apps must be too.
+	bind := "127.0.0.1"
+	if public {
+		bind = "0.0.0.0"
+	}
 	args := []string{"run", "-d", "--name", ctr, "--network", network,
 		"--label", "shoal.deploy/app=" + app, "--restart", "unless-stopped",
-		"-p", fmt.Sprintf("127.0.0.1:%d:%d", host, cport)}
+		"-p", fmt.Sprintf("%s:%d:%d", bind, host, cport)}
 	keys := make([]string, 0, len(env))
 	for k := range env {
 		keys = append(keys, k)

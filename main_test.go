@@ -410,7 +410,7 @@ func TestPublishOnFreePortDoesNotTakeAHeldPort(t *testing.T) {
 	defer cancel()
 	defer exec.Command("docker", "rm", "-f", ctr).Run()
 	err = publishOnFreePort(ctx, ctr, "bridge", "portcheck", 80, map[string]string{}, "nginx:alpine",
-		func(string, ...any) {})
+		func(string, ...any) {}, false)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 )
@@ -36,7 +37,7 @@ func main() {
 		log.Fatalf("admin: %v", err)
 	}
 
-	dep := &Deployer{store: store, dataDir: *dataDir, caddy: findCaddy(*caddyBin), tlsInternal: *tlsInternal}
+	dep := &Deployer{store: store, dataDir: *dataDir, caddy: findCaddy(*caddyBin), tlsInternal: *tlsInternal, public: strings.HasPrefix(*listen, "0.0.0.0:")}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	dockerOK := dockerAvailable(ctx)
